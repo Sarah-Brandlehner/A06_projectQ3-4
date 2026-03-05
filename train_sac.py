@@ -5,7 +5,7 @@ Algorithm choice based on Paper 6 (Badea et al.): SAC with continuous
 heading + speed actions, 2 closest intruders in observation.
 
 Usage:
-    python train_sac.py --timesteps 500000 --num-flights 10
+    python train_sac.py --timesteps 50000 --num-flights 10
 """
 import argparse
 import numpy as np
@@ -24,7 +24,7 @@ def make_env(num_flights: int = 10, **kwargs):
     env = ATCEnvWrapper(num_flights=num_flights, **kwargs)
     return Monitor(env)
 
-
+a=1
 def train(args):
     # Create environments
     train_env = make_env(num_flights=args.num_flights)
