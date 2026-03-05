@@ -6,11 +6,13 @@ heading + speed actions, 2 closest intruders in observation.
 
 # USE THE NUMBER OF CORES YOUR CPU HAS
 Usage:
-    python train_sac.py --timesteps 500000 --num-flights 10 --num-envs 6 
+    python train_sac.py --timesteps 500000 --num-flights 10 --num-envs 8 
 """
 import argparse
+import os
 import numpy as np
 import torch
+from datetime import datetime
 print("Is PyTorch using GPU?", torch.cuda.is_available())
 from stable_baselines3 import SAC
 from stable_baselines3.common.callbacks import (
@@ -22,7 +24,62 @@ from stable_baselines3.common.monitor import Monitor
 # Import Vector Environment wrappers for multiprocessing
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 
-from atcenv.sb3_wrapper import ATCEnvWrapper
+from atcenv.sb3_wrapper import (
+    ATCEnvWrapper, ACTION_FREQUENCY, OBS_SIZE,
+    INTRUDER_DIST_NORM, INTRUDER_POS_NORM, TARGET_DIST_NORM,
+)
+
+
+def save_config(args, save_path="./results/training_config.txt"):
+    """Save all training settings to a text file for experiment tracking."""
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+
+    import inspect
+    from atcenv.env import Environment
+    reward_source = inspect.getsource(Environment.reward)
+
+    with open(save_path, "w") as f:
+        f.write(f"Training Configuration\n")
+        f.write(f"{'='*50}\n")
+        f.write(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+
+        f.write(f"--- Training Parameters ---\n")
+        f.write(f"Timesteps:       {args.timesteps}\n")
+        f.write(f"Num flights:     {args.num_flights}\n")
+        f.write(f"Num envs:        {args.num_envs}\n")
+        f.write(f"Algorithm:       SAC (MlpPolicy)\n")
+        f.write(f"Learning rate:   1e-3\n")
+        f.write(f"Buffer size:     100,000\n")
+        f.write(f"Batch size:      256\n")
+        f.write(f"Gamma:           0.99\n")
+        f.write(f"Tau:             0.005\n")
+        f.write(f"Train freq:      8\n")
+        f.write(f"Gradient steps:  8\n")
+        f.write(f"Entropy coeff:   auto\n\n")
+
+        f.write(f"--- Observation Normalization ---\n")
+        f.write(f"Intruder distance center: {INTRUDER_DIST_NORM} m\n")
+        f.write(f"Intruder distance scale:  {INTRUDER_DIST_NORM * 0.3} m\n")
+        f.write(f"Intruder position scale:  {INTRUDER_POS_NORM} m\n")
+        f.write(f"Target distance scale:    {TARGET_DIST_NORM} m\n")
+        f.write(f"Speed center:             230.0 m/s\n")
+        f.write(f"Speed scale:              30.0 m/s\n")
+        f.write(f"Observation size:         {OBS_SIZE}\n")
+        f.write(f"Action frequency:         {ACTION_FREQUENCY}\n\n")
+
+        f.write(f"--- Reward Function ---\n")
+        for line in reward_source.split('\n'):
+            stripped = line.strip()
+            if any(kw in stripped for kw in ['drift', 'conflict', 'target', 'tot_reward']):
+                if not stripped.startswith('#'):
+                    f.write(f"  {stripped}\n")
+        f.write(f"\n")
+
+        f.write(f"--- Heading / Speed Limits ---\n")
+        f.write(f"Max heading change:  22.5 deg per action\n")
+        f.write(f"Speed change:        (max_speed - min_speed) / 10 per action\n")
+
+    print(f"Config saved to {save_path}")
 
 
 def make_env(num_flights: int = 10, **kwargs):
@@ -32,6 +89,9 @@ def make_env(num_flights: int = 10, **kwargs):
 
 
 def train(args):
+    # Save training config for experiment tracking
+    save_config(args)
+
     print(f"Is PyTorch using GPU? {torch.cuda.is_available()}")
     
     # 1. Create a function that creates environments (required for multiprocessing)

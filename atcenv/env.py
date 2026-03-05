@@ -96,8 +96,8 @@ class Environment(gym.Env):
         return None
 
     def reward(self) -> List:
-        drifts     = self.drift_penalties() * -0.1
-        conflicts  = self.conflict_penalties() * -5.0
+        drifts     = self.drift_penalties() * -0.5
+        conflicts  = self.conflict_penalties() * -2.0
         target     = self.reachedTarget() * 1.0
         tot_reward = drifts + conflicts + target
         return tot_reward
