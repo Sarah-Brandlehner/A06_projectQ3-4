@@ -128,8 +128,8 @@ class Environment(gym.Env):
         # 1. Drift penalty: abs(drift_rad) * -0.1  (reference: DRIFT_PENALTY = -0.1)
         # 2. Intrusion penalty: -5.0 per active conflict (strong to ensure avoidance)
         # 3. Target bonus: +1.0 for reaching the target
-        drifts     = self.drift_penalties() * -0.1   # drift_penalties returns abs(drift_rad)
-        conflicts  = self.conflict_penalties() * -5.0
+        drifts     = self.drift_penalties() * -0.5   # drift_penalties returns abs(drift_rad)
+        conflicts  = self.conflict_penalties() * -1.0
         target     = self.reachedTarget() * 1.0
 
         tot_reward = drifts + conflicts + target
@@ -405,7 +405,7 @@ class Environment(gym.Env):
 
 
         #update screen
-        self.render() 
+        #self.render() # commenting out for faster evaluation
 
         return obs, rew, done_t, done_e, {}
 
