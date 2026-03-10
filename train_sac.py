@@ -50,7 +50,7 @@ def train(args):
     model = SAC(
         "MlpPolicy",
         train_env,
-        # device="cpu",                 # <-- UNCOMMENT THIS LINE if you want to test if CPU is faster than GPU for your small network
+        device="cpu",                 # <-- UNCOMMENT THIS LINE if you want to test if CPU is faster than GPU for your small network
         learning_rate=1e-3,             # reference uses 1e-3
         buffer_size=100_000,
         batch_size=256,
