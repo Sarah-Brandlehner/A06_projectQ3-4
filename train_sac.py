@@ -7,6 +7,7 @@ heading + speed actions, 2 closest intruders in observation.
 # USE THE NUMBER OF CORES YOUR CPU HAS
 Usage:
     python train_sac.py --timesteps 500000 --num-flights 10 --num-envs 8 
+    python train_sac.py --run-name run_1_baseline
 """
 import argparse
 import os
@@ -30,8 +31,9 @@ from atcenv.sb3_wrapper import (
 )
 
 
-def save_config(args, save_path="./results/training_config.txt"):
+def save_config(args, run_dir):
     """Save all training settings to a text file for experiment tracking."""
+    save_path = os.path.join(run_dir, "training_config.txt")
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
 
     import inspect
@@ -41,7 +43,8 @@ def save_config(args, save_path="./results/training_config.txt"):
     with open(save_path, "w") as f:
         f.write(f"Training Configuration\n")
         f.write(f"{'='*50}\n")
-        f.write(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n")
+        f.write(f"Date: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
+        f.write(f"Run name: {args.run_name if args.run_name else 'timestamp-based'}\n\n")
 
         f.write(f"--- Training Parameters ---\n")
         f.write(f"Timesteps:       {args.timesteps}\n")
@@ -89,8 +92,18 @@ def make_env(num_flights: int = 10, **kwargs):
 
 
 def train(args):
+    # Determine the run directory based on the run name or timestamp
+    if args.run_name:
+        run_name = args.run_name
+    else:
+        run_name = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+    
+    run_dir = f"./results/{run_name}"
+    print(f"Starting training run: {run_name}")
+    print(f"All outputs will be saved to: {run_dir}")
+
     # Save training config for experiment tracking
-    save_config(args)
+    save_config(args, run_dir)
 
     print(f"Is PyTorch using GPU? {torch.cuda.is_available()}")
     
@@ -125,7 +138,7 @@ def train(args):
         
         ent_coef="auto",
         verbose=1,
-        tensorboard_log="./results/tensorboard/",
+        tensorboard_log=f"{run_dir}/tensorboard/",
     )
 
     # Note on Callbacks with Vector Environments: 
@@ -137,8 +150,8 @@ def train(args):
     # Callbacks
     eval_callback = EvalCallback(
         eval_env,
-        best_model_save_path="./results/best_model/",
-        log_path="./results/eval_logs/",
+        best_model_save_path=f"{run_dir}/best_model/",
+        log_path=f"{run_dir}/eval_logs/",
         eval_freq=eval_freq_adjusted,
         n_eval_episodes=10,
         deterministic=True,
@@ -146,7 +159,7 @@ def train(args):
 
     checkpoint_callback = CheckpointCallback(
         save_freq=save_freq_adjusted,
-        save_path="./results/checkpoints/",
+        save_path=f"{run_dir}/checkpoints/",
         name_prefix="sac_atc",
     )
 
@@ -158,8 +171,8 @@ def train(args):
     )
 
     # Save final model
-    model.save("./results/sac_atc_final")
-    print("Training complete. Model saved to ./results/sac_atc_final")
+    model.save(f"{run_dir}/sac_atc_final")
+    print(f"Training complete. Model saved to {run_dir}/sac_atc_final")
 
 
 if __name__ == "__main__":
@@ -168,6 +181,9 @@ if __name__ == "__main__":
     parser.add_argument("--num-flights", type=int, default=10)
     # Added argument to control how many CPU cores to use for environment generation
     parser.add_argument("--num-envs", type=int, default=4) 
+    # Added argument to name the run directory
+    parser.add_argument("--run-name", type=str, default=None,
+                        help="Name for the results folder. If not provided, a timestamp is used.")
     
     args = parser.parse_args()
     train(args)

@@ -9,6 +9,14 @@ Commands:
     python visualize.py trajectory        # Plot aircraft trajectories for one episode
     python visualize.py evaluate          # Run evaluation and plot metrics
     python visualize.py compare           # Compare multiple checkpoints
+ 
+    To run the visualization in a specific run directory, use the --run-dir argument:
+
+    python visualize.py compare --run-dir results/test_03drift_40conflict
+    python visualize.py evaluate --run-dir results/test_03drift_40conflict
+    python visualize.py training --run-dir results/test_03drift_40conflict
+    python visualize.py trajectory --run-dir results/test_03drift_40conflict
+
 """
 import argparse
 import os
@@ -390,19 +398,33 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ATC Model Visualization Tools")
     parser.add_argument("command", choices=["training", "trajectory", "evaluate", "compare"],
                         help="Which visualization to run")
-    parser.add_argument("--model", type=str, default="results/best_model/best_model.zip")
+    parser.add_argument("--run-dir", type=str, default="results",
+                        help="The results directory to analyze (e.g., results/test_03drift_40conflict)")
+    parser.add_argument("--model-name", type=str, default="best_model/best_model.zip",
+                        help="Which model inside the run-dir to evaluate")
     parser.add_argument("--episodes", type=int, default=30)
     parser.add_argument("--num-flights", type=int, default=5)
     args = parser.parse_args()
 
+    # Construct the full paths based on the run-dir
+    model_path = os.path.join(args.run_dir, args.model_name)
+    eval_log_path = os.path.join(args.run_dir, "eval_logs", "evaluations.npz")
+    checkpoint_dir = os.path.join(args.run_dir, "checkpoints")
+
     if args.command == "training":
-        plot_training_curves()
+        plot_training_curves(eval_log_path=eval_log_path, 
+                             save_path=os.path.join(args.run_dir, "plots", "training_curves.png"))
 
     elif args.command == "trajectory":
-        plot_trajectories(args.model, args.num_flights)
+        plot_trajectories(model_path, args.num_flights, deploy_all=True,
+                          save_path=os.path.join(args.run_dir, "plots", "trajectories.png"))
 
     elif args.command == "evaluate":
-        plot_evaluation(args.model, args.episodes, args.num_flights)
+        plot_evaluation(model_path, args.episodes, args.num_flights,
+                        save_path=os.path.join(args.run_dir, "plots", "evaluation.png"))
 
     elif args.command == "compare":
-        compare_checkpoints(n_episodes=args.episodes, num_flights=args.num_flights)
+        compare_checkpoints(checkpoint_dir=checkpoint_dir, 
+                            n_episodes=args.episodes, 
+                            num_flights=args.num_flights,
+                            save_path=os.path.join(args.run_dir, "plots", "checkpoint_comparison.png"))

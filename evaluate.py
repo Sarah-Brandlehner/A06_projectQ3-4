@@ -14,12 +14,10 @@ import numpy as np
 from stable_baselines3 import SAC
 
 from atcenv.env import Environment, NUMBER_INTRUDERS_STATE
-from atcenv.sb3_wrapper import ATCEnvWrapper, ACTION_FREQUENCY
-
-# Normalization constants (must match sb3_wrapper.py exactly)
-INTRUDER_DIST_NORM = 50000.0
-INTRUDER_POS_NORM = 13000.0
-TARGET_DIST_NORM = 200000.0
+from atcenv.sb3_wrapper import (
+    ATCEnvWrapper, ACTION_FREQUENCY, OBS_SIZE,
+    INTRUDER_DIST_NORM, INTRUDER_POS_NORM, TARGET_DIST_NORM,
+)
 
 
 def normalize_obs(raw_obs):
@@ -27,13 +25,22 @@ def normalize_obs(raw_obs):
     obs = np.array(raw_obs, dtype=np.float32)
     n = NUMBER_INTRUDERS_STATE
 
+    # Intruder distances
     obs[0:n]     = (obs[0:n] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
     obs[n:2*n]   = (obs[n:2*n] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
+
+    # Relative dx, dy
     obs[2*n:3*n] = obs[2*n:3*n] / INTRUDER_POS_NORM
     obs[3*n:4*n] = obs[3*n:4*n] / INTRUDER_POS_NORM
+
+    # Track differences
     obs[4*n:5*n] = obs[4*n:5*n] / np.pi
+
+    # Airspeeds
     obs[5*n]     = (obs[5*n] - 230.0) / 30.0
     obs[5*n+1]   = (obs[5*n+1] - 230.0) / 30.0
+
+    # Distance to target
     obs[5*n+2]   = (obs[5*n+2] - TARGET_DIST_NORM * 0.5) / (TARGET_DIST_NORM * 0.5)
 
     return np.clip(obs, -1.0, 1.0).astype(np.float32)
