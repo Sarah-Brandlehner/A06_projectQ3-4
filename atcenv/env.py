@@ -5,7 +5,7 @@ import gymnasium as gym
 import pygame
 from typing import Dict, List, Tuple, Optional
 from atcenv.definitions import *
-from shapely.geometry import LineString, Point
+from shapely.geometry import LineString, Point, Polygon
 from .uncertainties import position_scramble, apply_wind, apply_position_delay
 
 import math
@@ -17,6 +17,7 @@ GREEN = [0, 255, 0]
 BLUE = [0, 0, 255]
 BLACK = [0, 0, 0]
 RED = [255, 0, 0]
+YELLOW = [255, 255, 0]
 
 # Position uncertainty vars
 ENABLE_POSITION_UNCERTAINTY = False
@@ -69,6 +70,7 @@ class Environment(gym.Env):
 
         self.viewer = None
         self.airspace = None
+        self.restricted_airspace = None
         self.flights = [] # list of flights
         self.conflicts = set()  # set of flights that are in conflict
         self.done = set()  # set of flights that reached the target
@@ -77,6 +79,11 @@ class Environment(gym.Env):
         # Get the random wind direction and intensity for this episode
         self.wind_magnitude = random.randint(MINIMUM_WIND_SPEED, MAXIMUM_WIND_SPEED)
         self.wind_direction = random.randint(0, 359)
+
+        # Set window position if provided
+        if 'window_pos' in kwargs:
+            import os
+            os.environ['SDL_VIDEO_WINDOW_POS'] = f"{kwargs['window_pos'][0]},{kwargs['window_pos'][1]}"
 
     def resolution(self, action: List) -> None:
         """
@@ -288,7 +295,7 @@ class Environment(gym.Env):
         done_t = (self.i == self.max_episode_len) 
         done_e = (len(self.done) == self.num_flights)
 
-       # self.render() # comment out for training    
+        self.render() # comment out for training    
 
         return obs, rew, done_t, done_e, {}
 
@@ -301,6 +308,22 @@ class Environment(gym.Env):
 
     def reset(self, number_flights_training) -> List:
         self.airspace = Airspace.random(self.min_area, self.max_area)
+        
+        # Generate restricted airspace until it's completely contained within the normal airspace
+        max_attempts = 100
+        attempts = 0
+        while attempts < max_attempts:
+            self.restricted_airspace = Airspace.random(self.min_area * 0.05, self.max_area * 0.1)
+            if self.airspace.contains_polygon(self.restricted_airspace.polygon):
+                break
+            attempts += 1
+        
+        if attempts >= max_attempts:
+            # Fallback: create a smaller restricted airspace centered in the normal airspace
+            centroid = self.airspace.polygon.centroid
+            buffer_dist = (self.airspace.polygon.bounds[2] - self.airspace.polygon.bounds[0]) * 0.15
+            self.restricted_airspace = Airspace(polygon=centroid.buffer(buffer_dist))
+        
         self.num_flights = number_flights_training
         self.flights = []
         tol = self.distance_init_buffer * self.tol
@@ -349,11 +372,23 @@ class Environment(gym.Env):
         ]
         pygame.draw.lines(self.screen, WHITE, False, sector_pts, 1)
 
+        # Draw restricted airspace
+        if self.restricted_airspace:
+            restricted_pts = [
+                world_to_screen(x, y)
+                for x, y in self.restricted_airspace.polygon.boundary.coords
+            ]
+            pygame.draw.lines(self.screen, YELLOW, False, restricted_pts, 2)
+
         for i, f in enumerate(self.flights):
             if i in self.done:
                 continue
 
-            color = RED if i in self.conflicts else BLUE
+            in_restricted = self.restricted_airspace.contains_point(f.reported_position.x, f.reported_position.y) if self.restricted_airspace else False
+            if in_restricted:
+                color = WHITE
+            else:
+                color = RED if i in self.conflicts else BLUE
 
             cx, cy = world_to_screen(
                 f.reported_position.x,

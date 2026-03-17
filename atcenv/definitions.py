@@ -43,6 +43,18 @@ class Airspace:
 
         return cls(polygon=polygon)
 
+    def contains_point(self, x: float, y: float) -> bool:
+        """
+        Checks if the point (x, y) is inside the airspace polygon.
+        """
+        return self.polygon.contains(Point(x, y))
+
+    def contains_polygon(self, other_polygon: 'Polygon') -> bool:
+        """
+        Checks if another polygon is completely contained within this airspace.
+        """
+        return self.polygon.contains(other_polygon)
+
 
 @dataclass
 class Flight:

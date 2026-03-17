@@ -113,6 +113,9 @@ def train(args):
 
     print(f"Is PyTorch using GPU? {torch.cuda.is_available()}")
     
+    # Window positions for distributed display
+    positions = [(i % 4 * 400, i // 4 * 300) for i in range(8)]
+    
     if args.train_all:
         print(f"Deploying shared policy over ALL {args.num_flights} active flights simultaneously.")
         
@@ -121,10 +124,8 @@ def train(args):
             from atcenv.multi_agent_wrapper import SharedPolicyVecEnv, SubprocMultiAgentVecEnv
             from stable_baselines3.common.vec_env import VecMonitor
             
-            def make_shared_env_fn():
-                return SharedPolicyVecEnv(num_flights=args.num_flights)
-
-            base_env = SubprocMultiAgentVecEnv([make_shared_env_fn for _ in range(args.num_envs)], num_flights=args.num_flights)
+            env_fns = [lambda i=i: SharedPolicyVecEnv(num_flights=args.num_flights, window_pos=positions[i]) for i in range(args.num_envs)]
+            base_env = SubprocMultiAgentVecEnv(env_fns, num_flights=args.num_flights)
             train_env = VecMonitor(base_env)
             
             # Eval environment only needs 1 core
@@ -144,11 +145,9 @@ def train(args):
             effective_envs = args.num_flights
     else:
         print(f"Using single-actor baseline on {args.num_envs} CPU cores.")
-        def make_env_fn():
-            return make_env(num_flights=args.num_flights)
-
-        train_env = SubprocVecEnv([make_env_fn for _ in range(args.num_envs)])
-        eval_env = DummyVecEnv([make_env_fn])
+        env_fns = [lambda i=i: make_env(num_flights=args.num_flights, window_pos=positions[i]) for i in range(args.num_envs)]
+        train_env = SubprocVecEnv(env_fns)
+        eval_env = DummyVecEnv([lambda: make_env(num_flights=args.num_flights)])
         effective_envs = args.num_envs
 
     # 4. Create SAC model
