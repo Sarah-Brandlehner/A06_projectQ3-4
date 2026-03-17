@@ -34,10 +34,51 @@ class Airspace:
             y = r * math.sin(alpha)
             return Point(x, y)
 
-        p = [random_point_in_circle(R) for _ in range(3)]
+        p = [random_point_in_circle(R) for _ in range(4)]
         polygon = Polygon(p).convex_hull
 
         while polygon.area < min_area:
+            p.append(random_point_in_circle(R))
+            polygon = Polygon(p).convex_hull
+
+        return cls(polygon=polygon)
+
+
+@dataclass
+class RestrictedAirspace:
+    """
+    Restricted Airspace class - smaller airspace inside the main airspace
+    """
+    polygon: Polygon
+
+    @classmethod
+    def random(cls, min_area: float, max_area: float, scale_factor: float = 0.2):
+        """
+        Creates a random restricted airspace sector inside the main airspace
+        
+        :param max_area: maximum area of the main sector (in nm^2)
+        :param min_area: minimum area of the main sector (in nm^2)
+        :param scale_factor: scale factor for the restricted airspace (0-1, default 0.4 for 40% size)
+        :return: random restricted airspace
+        """
+        # Scale down the radius for a smaller airspace
+        R = math.sqrt(max_area / math.pi) * scale_factor
+
+        def random_point_in_circle(radius: float) -> Point:
+            alpha = 2 * math.pi * random.uniform(0., 1.)
+            r = radius * math.sqrt(random.uniform(0., 1.))
+            x = r * math.cos(alpha)
+            y = r * math.sin(alpha)
+            return Point(x, y)
+
+        # Start with a different number of points to ensure different shape
+        p = [random_point_in_circle(R) for _ in range(4)]
+        polygon = Polygon(p).convex_hull
+
+        # Scale down the minimum area requirement proportionally
+        scaled_min_area = min_area * (scale_factor ** 2)
+        
+        while polygon.area < scaled_min_area:
             p.append(random_point_in_circle(R))
             polygon = Polygon(p).convex_hull
 

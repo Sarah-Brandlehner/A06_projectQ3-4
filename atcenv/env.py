@@ -69,6 +69,7 @@ class Environment(gym.Env):
 
         self.viewer = None
         self.airspace = None
+        self.restricted_airspace = None
         self.flights = [] # list of flights
         self.conflicts = set()  # set of flights that are in conflict
         self.done = set()  # set of flights that reached the target
@@ -288,7 +289,7 @@ class Environment(gym.Env):
         done_t = (self.i == self.max_episode_len) 
         done_e = (len(self.done) == self.num_flights)
 
-       # self.render() # comment out for training    
+        self.render() # comment out for training    
 
         return obs, rew, done_t, done_e, {}
 
@@ -301,6 +302,7 @@ class Environment(gym.Env):
 
     def reset(self, number_flights_training) -> List:
         self.airspace = Airspace.random(self.min_area, self.max_area)
+        self.restricted_airspace = RestrictedAirspace.random(self.min_area, self.max_area)
         self.num_flights = number_flights_training
         self.flights = []
         tol = self.distance_init_buffer * self.tol
@@ -343,11 +345,20 @@ class Environment(gym.Env):
 
         self.screen.fill(BLACK)
 
+        # Draw main airspace
         sector_pts = [
             world_to_screen(x, y)
             for x, y in self.airspace.polygon.boundary.coords
         ]
         pygame.draw.lines(self.screen, WHITE, False, sector_pts, 1)
+
+        # Draw restricted airspace
+        if self.restricted_airspace:
+            restricted_pts = [
+                world_to_screen(x, y)
+                for x, y in self.restricted_airspace.polygon.boundary.coords
+            ]
+            pygame.draw.lines(self.screen, GREEN, False, restricted_pts, 2)
 
         for i, f in enumerate(self.flights):
             if i in self.done:

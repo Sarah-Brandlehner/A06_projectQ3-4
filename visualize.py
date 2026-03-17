@@ -153,17 +153,18 @@ def record_episode(model, num_flights=5, deploy_all=True):
 
     env.close()
 
-    # Get airspace polygon for plotting
+    # Get airspace polygons for plotting
     airspace_coords = list(env.airspace.polygon.exterior.coords)
+    restricted_airspace_coords = list(env.restricted_airspace.polygon.exterior.coords) if env.restricted_airspace else []
 
-    return trajectories, targets, airspace_coords, total_conflicts
+    return trajectories, targets, airspace_coords, restricted_airspace_coords, total_conflicts
 
 
 def plot_trajectories(model_path, num_flights=5, deploy_all=True,
                       save_path="results/plots/trajectories.png"):
     """Plot aircraft trajectories for one episode."""
     model = SAC.load(model_path)
-    trajectories, targets, airspace, total_conflicts = record_episode(
+    trajectories, targets, airspace, restricted_airspace, total_conflicts = record_episode(
         model, num_flights, deploy_all
     )
 
@@ -175,6 +176,12 @@ def plot_trajectories(model_path, num_flights=5, deploy_all=True,
     airspace_x = [p[0]/1000 for p in airspace]
     airspace_y = [p[1]/1000 for p in airspace]
     ax.plot(airspace_x, airspace_y, "k--", alpha=0.3, linewidth=1, label="Airspace")
+
+    # Draw restricted airspace boundary
+    if restricted_airspace:
+        restricted_x = [p[0]/1000 for p in restricted_airspace]
+        restricted_y = [p[1]/1000 for p in restricted_airspace]
+        ax.plot(restricted_x, restricted_y, "g-", alpha=0.6, linewidth=2, label="Restricted Airspace")
 
     for i in range(num_flights):
         traj = trajectories[i]
