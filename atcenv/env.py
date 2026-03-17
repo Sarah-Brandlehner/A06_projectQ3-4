@@ -3,13 +3,13 @@ Environment module
 """
 import gymnasium as gym
 import pygame
-from typing import Dict, List
+from typing import Dict, List, Tuple, Optional
 from atcenv.definitions import *
-from shapely.geometry import LineString
+from shapely.geometry import LineString, Point
 from .uncertainties import position_scramble, apply_wind, apply_position_delay
 
-import math as m
-# our own packages
+import math
+import random
 import numpy as np
 
 WHITE = [255, 255, 255]
@@ -23,7 +23,6 @@ ENABLE_POSITION_UNCERTAINTY = False
 PROB_POSITION_UNCERTAINTY = 0.2
 MAG_POSITION_UNCERTAINTY = 500 # m
 
-
 # Wind
 ENABLE_WIND = False
 MINIMUM_WIND_SPEED = 0 # m/s
@@ -34,8 +33,7 @@ ENABLE_DELAY = False
 MAXIMUM_DELAY = 3 # s
 PROB_DELAY = 0.1
 
-NUMBER_INTRUDERS_STATE = 5
-NUMBER_INTRUDERS_STATE = 2
+NUMBER_INTRUDERS_STATE = 2  # start with 2, can try 4 later as single change
 MAX_DISTANCE = 250*u.nm
 MAX_BEARING = math.pi
 
@@ -55,17 +53,6 @@ class Environment(gym.Env):
                  **kwargs):
         """
         Initialises the environment
-
-        :param num_flights: numer of flights in the environment
-        :param dt: time step (in seconds)
-        :param max_area: maximum area of the sector (in nm^2)
-        :param min_area: minimum area of the sector (in nm^2)
-        :param max_speed: maximum speed of the flights (in kt)
-        :param min_speed: minimum speed of the flights (in kt)
-        :param max_episode_len: maximum episode length (in number of steps)
-        :param min_distance: pairs of flights which distance is < min_distance are considered in conflict (in nm)
-        :param distance_init_buffer: distance factor used when initialising the enviroment to avoid flights close to conflict and close to the target
-        :param kwargs: other arguments of your custom environment
         """
         self.num_flights = num_flights
         self.max_area = max_area * (u.nm ** 2)
@@ -94,16 +81,9 @@ class Environment(gym.Env):
     def resolution(self, action: List) -> None:
         """
         Applies the resolution actions
-        If your policy can modify the speed, then remember to clip the speed of each flight
-        In the range [min_speed, max_speed]
-        :param action: list of resolution actions assigned to each flight
-        :return:
         """
-
         it2 = 0
-
         for i, f in enumerate(self.flights):
-
             if i not in self.done:
                 # Heading change: ±22.5° per action (matches reference)
                 new_track = f.track + action[it2][0] * math.radians(22.5)
@@ -111,242 +91,174 @@ class Environment(gym.Env):
                 # Speed change: ±6.67 kts per action (matches reference D_VELOCITY)
                 f.airspeed += action[it2][1] * (self.max_speed - self.min_speed) / 10
                 f.airspeed = max(min(f.airspeed, self.max_speed), self.min_speed)
-
                 it2 += 1
-        # RDC: here you should implement your resolution actions
-        ##########################################################
         return None
-        ##########################################################
 
     def reward(self) -> List:
-        """
-        Returns the reward assigned to each agent
-        :return: reward assigned to each agent
-        """
-
-        # Simple reward following bluesky-gym reference:
-        # 1. Drift penalty: abs(drift_rad) * -0.1  (reference: DRIFT_PENALTY = -0.1)
-        # 2. Intrusion penalty: -5.0 per active conflict (strong to ensure avoidance)
-        # 3. Target bonus: +1.0 for reaching the target
-        drifts     = self.drift_penalties() * -0.1   # drift_penalties returns abs(drift_rad)
-        conflicts  = self.conflict_penalties() * -5.0
+        # Penalties per sub-step (accumulated across ACTION_FREQUENCY steps in wrapper)
+        # Effective per RL step: drift ≈ -2.5, conflict = -10.0, target = +1.0
+        drifts     = self.drift_penalties() * -0.3
+        conflicts  = self.conflict_penalties() * -4.0
         target     = self.reachedTarget() * 1.0
-
         tot_reward = drifts + conflicts + target
-
         return tot_reward
 
     def reachedTarget(self):
-        """
-        Returns a list with aircraft that just reached the target
-        :return: boolean list - 1 if aircraft have reached the target
-        """        
         target = np.zeros(self.num_flights)
         for i, f in enumerate(self.flights):
             if i not in self.done:
-                distance = f.position.distance(f.target)
+                # Fast math hypotenuse instead of Shapely distance
+                distance = math.hypot(f.position.x - f.target.x, f.position.y - f.target.y)
                 if distance < self.tol:
                     target[i] = 1
-                    
         return target
 
     def speedDifference(self):
-        """
-        Returns a list with the diferent betwee the current aircraft and its optimal speed
-        :return: float of the speed difference
-        """
         speed_dif = np.zeros(self.num_flights)
         for i, f in enumerate(self.flights):
             speed_dif[i] = abs(f.airspeed - f.optimal_airspeed) / (self.max_speed - self.min_speed)
-                    
         return speed_dif
         
     def conflict_penalties(self):
-        """
-        Returns a list with aircraft that are in conflict,
-        can be used for multiplication as individual reward
-        component
-        :return: boolean list for conflicts
-        """
-        
         conflicts = np.zeros(self.num_flights)
         for i in range(self.num_flights):
-            if i not in self.done:
-                if i in self.conflicts:
-                    conflicts[i] += 1
-                    
+            if i not in self.done and i in self.conflicts:
+                conflicts[i] += 1
         return conflicts
     
     def drift_penalties(self):
-        """
-        Returns a list with the drift angle for all aircraft,
-        can be used for multiplication as individual reward
-        component
-        :return: float of the drift angle
-        """
-        
         drift = np.zeros(self.num_flights)
         for i, f in enumerate(self.flights):
             if i not in self.done:
-                # Return abs(drift) in radians (positive value)
-                # Reward function multiplies by -0.1 to match reference
                 drift[i] = abs(f.drift)
-        
         return drift
-            
-
 
     def observation(self) -> List:
         """
-        Returns the observation of each agent
-        :return: observation of each agent
+        Returns the observation of each agent using fast NumPy vectorization.
+        Layout (5*N + 5): cur_dis, pred_dis, dx, dy, trackdif, airspeed,
+        optimal_airspeed, target_dist, sin(drift), cos(drift)
         """
-        # observations (size = 2 * NUMBER_INTRUDERS_STATE + 5):
-        # distance to closest #NUMBER_INTRUDERS_STATE intruders
-        # relative bearing to closest #NUMBER_INTRUDERS_STATE intruders
-        # current bearing
-        # current speed
-        # optimal airspeed
-        # distance to target
-        # bearing to target
+        if self.num_flights == 0:
+            return []
+
+        # Extract flight data into arrays
+        pos_x = np.array([f.position.x for f in self.flights])
+        pos_y = np.array([f.position.y for f in self.flights])
+        pred_x = np.array([f.prediction.x for f in self.flights])
+        pred_y = np.array([f.prediction.y for f in self.flights])
+        tracks = np.array([f.track for f in self.flights])
+
+        # Distance matrices
+        dx = pos_x[np.newaxis, :] - pos_x[:, np.newaxis]
+        dy = pos_y[np.newaxis, :] - pos_y[:, np.newaxis]
+        cur_dis = np.hypot(dx, dy)
+
+        p_dx = pred_x[np.newaxis, :] - pred_x[:, np.newaxis]
+        p_dy = pred_y[np.newaxis, :] - pred_y[:, np.newaxis]
+        distance_all = np.hypot(p_dx, p_dy)
+
+        # Bearings
+        compass = np.arctan2(dx, dy)
+        compass = compass - tracks[:, np.newaxis]
+        compass = (compass + u.circle) % u.circle
+        compass[compass > math.pi] -= u.circle
+        bearing_all = compass
+
+        # Track differences
+        trackdif_all = tracks[:, np.newaxis] - tracks[np.newaxis, :]
+
+        # DX / DY components
+        dx_all = np.sin(bearing_all) * cur_dis
+        dy_all = np.cos(bearing_all) * cur_dis
+
+        # Mask out done flights and self
+        done_mask = np.zeros(self.num_flights, dtype=bool)
+        for d in self.done:
+            done_mask[d] = True
+        for i in range(self.num_flights):
+            cur_dis[i, i] = MAX_DISTANCE
+            distance_all[i, i] = MAX_DISTANCE
+            cur_dis[i, done_mask] = MAX_DISTANCE
+            distance_all[i, done_mask] = MAX_DISTANCE
 
         observations_all = []
-        cur_dis     = np.ones((self.num_flights, self.num_flights))*MAX_DISTANCE
-        distance_all = np.ones((self.num_flights, self.num_flights))*MAX_DISTANCE
-        bearing_all = np.ones((self.num_flights, self.num_flights))*MAX_BEARING
-        dx_all  = np.ones((self.num_flights, self.num_flights))*MAX_DISTANCE
-        dy_all  = np.ones((self.num_flights, self.num_flights))*MAX_DISTANCE
-
-        trackdif_all  = np.ones((self.num_flights, self.num_flights))*3.14
-        for i in range(self.num_flights):
-            if i not in self.done:
-                for j in range(self.num_flights):
-                    if j not in self.done and j != i:
-                        # predicted used instead of position, so ownship can work in regard to future position and still
-                        # avoid a future conflict
-                        cur_dis[i][j] = self.flights[i].position.distance(self.flights[j].position)
-
-                        distance_all[i][j] = self.flights[i].prediction.distance(self.flights[j].prediction)
-
-                         # relative bearing
-                        dx = self.flights[j].position.x - self.flights[i].position.x
-                        dy = self.flights[j].position.y - self.flights[i].position.y
-                        compass = math.atan2(dx, dy)                             
-                        compass = compass - self.flights[i].track  
-                        compass = (compass + u.circle) % u.circle       
-                        if compass > math.pi:
-                            compass = -(u.circle - compass)
-                        elif compass < -math.pi:
-                            compass = u.circle + compass
-                        bearing_all[i][j] = compass
-
-                        trackdif_all[i][j] = self.flights[i].track - self.flights[j].track
-
-                        dx_all[i][j] = m.sin(float(bearing_all[i][j])) * cur_dis[i][j]
-                        dy_all[i][j] = m.cos(float(bearing_all[i][j])) * cur_dis[i][j]
-
         for i, f in enumerate(self.flights):
-            if i not in self.done:
-                observations = []
+            if i in self.done:
+                continue
 
-                closest_intruders = np.argsort(distance_all[i])[:NUMBER_INTRUDERS_STATE]
+            closest_intruders = np.argsort(distance_all[i])[:NUMBER_INTRUDERS_STATE]
+            obs = []
 
-                # distance to closest #NUMBER_INTRUDERS_STATE
-                observations += np.take(cur_dis[i], closest_intruders).tolist()
+            def add_padded(vals_array):
+                vals = vals_array[i, closest_intruders].tolist()
+                obs.extend(vals)
+                if len(vals) < NUMBER_INTRUDERS_STATE:
+                    pad_val = MAX_DISTANCE if vals_array is cur_dis else 0
+                    obs.extend([pad_val] * (NUMBER_INTRUDERS_STATE - len(vals)))
 
-                # during training the number of flights may be lower than #NUMBER_INTRUDERS_STATE
-                while len(observations) < NUMBER_INTRUDERS_STATE:
-                    observations.append(MAX_DISTANCE)
-                
-                observations += np.take(distance_all[i], closest_intruders).tolist()
+            add_padded(cur_dis)
+            add_padded(distance_all)
+            add_padded(dx_all)
+            add_padded(dy_all)
+            add_padded(trackdif_all)
 
-                # during training the number of flights may be lower than #NUMBER_INTRUDERS_STATE
-                while len(observations) < 2*NUMBER_INTRUDERS_STATE:
-                    observations.append(0)
+            # Ownship state
+            obs.append(f.airspeed)
+            obs.append(f.optimal_airspeed)
+            obs.append(math.hypot(f.position.x - f.target.x, f.position.y - f.target.y))
+            obs.append(math.sin(float(f.drift)))
+            obs.append(math.cos(float(f.drift)))
 
-                # relative bearing #NUMBER_INTRUDERS_STATE
-                observations += np.take(dx_all[i], closest_intruders).tolist()
+            observations_all.append(obs)
 
-                # during training the number of flights may be lower than #NUMBER_INTRUDERS_STATE
-                while len(observations) < 3*NUMBER_INTRUDERS_STATE:
-                    observations.append(0)
-
-                observations += np.take(dy_all[i], closest_intruders).tolist()
-
-                # during training the number of flights may be lower than #NUMBER_INTRUDERS_STATE
-                while len(observations) < 4*NUMBER_INTRUDERS_STATE:
-                    observations.append(0)
-                                
-                observations += np.take(trackdif_all[i], closest_intruders).tolist()
-
-                while len(observations) < 5*NUMBER_INTRUDERS_STATE:
-                    observations.append(0)
-                
-                # current speed
-                observations.append(f.airspeed)
-
-                # optimal speed
-                observations.append(f.optimal_airspeed)
-
-                # distance to target
-                observations.append(f.position.distance(f.target))
-
-                # bearing to target
-                observations.append(m.sin(float(f.drift)))
-                observations.append(m.cos(float(f.drift)))
-
-                observations_all.append(observations)
-        # RDC: here you should implement your observation function
-        ##########################################################
         return observations_all
-        ##########################################################
 
     def update_conflicts(self) -> None:
         """
-        Updates the set of flights that are in conflict
-        Note: flights that reached the target are not considered
-        :return:
+        Updates the set of flights that are in conflict using fast matrix math
         """
-        # reset set
         self.conflicts = set()
+        active = [i for i in range(self.num_flights) if i not in self.done]
+        
+        if len(active) < 2:
+            return
 
-        for i in range(self.num_flights - 1):
-            if i not in self.done:
-                for j in range(i + 1, self.num_flights):
-                    if j not in self.done:
-                        distance = self.flights[i].position.distance(self.flights[j].position)
-                        if distance < self.min_distance:
-                            self.conflicts.update((i, j))
+        pos_x = np.array([self.flights[i].position.x for i in active])
+        pos_y = np.array([self.flights[i].position.y for i in active])
+
+        dx = pos_x[:, np.newaxis] - pos_x
+        dy = pos_y[:, np.newaxis] - pos_y
+        dist_matrix = np.hypot(dx, dy)
+
+        # Find all pairs where distance < min_distance
+        rows, cols = np.where(dist_matrix < self.min_distance)
+
+        for r, c in zip(rows, cols):
+            if r != c:
+                self.conflicts.update((active[r], active[c]))
 
     def update_done(self) -> None:
         """
         Updates the set of flights that reached the target
-        :return:
         """
         for i, f in enumerate(self.flights):
             if i not in self.done:
-                distance = f.position.distance(f.target)
+                # Fast math hypotenuse instead of Shapely object distance
+                distance = math.hypot(f.position.x - f.target.x, f.position.y - f.target.y)
                 if distance < self.tol:
                     self.done.add(i)
 
     def update_positions(self) -> None:
-        """
-        Updates the position of the agents
-        Note: the position of agents that reached the target is not modified
-        :return:
-        """
         for i, f in enumerate(self.flights):
             if i not in self.done:
-                # get current speed components
                 if ENABLE_WIND:
                     dx, dy = apply_wind(f, self.wind_magnitude, self.wind_direction)
                 else:
                     dx, dy = f.components
 
-                # get current position
                 position = f.position
 
-                # get new position and advance one time step
                 if ENABLE_DELAY:
                     newx, newy = apply_position_delay(f, PROB_DELAY, MAXIMUM_DELAY, self.dt, dx, dy)
                 else:
@@ -354,58 +266,29 @@ class Environment(gym.Env):
                     newy = position.y + dy * self.dt
                 f.position = Point(newx, newy)
                 
-                # Scramble the position
                 if ENABLE_POSITION_UNCERTAINTY:
                     f.reported_position = position_scramble(f.position, PROB_POSITION_UNCERTAINTY, 
                                                 0, MAG_POSITION_UNCERTAINTY)
                 else:
                     f.reported_position = f.position
                     
-                # Store the dx and dy as the previous dx and dy
                 f.prev_dx = dx
                 f.prev_dy = dy
 
-    def step(self, action: List,) -> Tuple[List, List, bool, Dict]:
-        """
-        Performs a simulation step
-
-        :param action: list of resolution actions assigned to each flight
-        :return: observation, reward, done status and other information
-        """
-        # apply resolution actions
+    def step(self, action: List) -> Tuple[List, List, bool, bool, Dict]:
         self.resolution(action)
-
-        # update positions
         self.update_positions()
-
-        # update done set
         self.update_done()
-
-        # update conflict set
         self.update_conflicts()
-
-        # compute reward
         rew = self.reward()
-
-        # compute observation
         obs = self.observation()
-
-        # increase steps counter
         self.i += 1
-
-        # store difference from optimal speed
         self.checkSpeedDif()
 
-        # check termination status
-        # termination happens when
-        # (1) all flights reached the target
-        # (2) the maximum episode length is reached
         done_t = (self.i == self.max_episode_len) 
         done_e = (len(self.done) == self.num_flights)
 
-
-        #update screen
-        self.render() 
+       # self.render() # comment out for training    
 
         return obs, rew, done_t, done_e, {}
 
@@ -414,105 +297,64 @@ class Environment(gym.Env):
         speed_dif = np.array([])
         for i, f in enumerate(self.flights):
             speed_dif = np.append(speed_dif, abs(f.airspeed - f.optimal_airspeed))
-
         self.average_speed_dif = np.average(speed_dif)
 
     def reset(self, number_flights_training) -> List:
-        """
-        Resets the environment and returns initial observation
-        :return: initial observation
-        """
-        # create random airspace
         self.airspace = Airspace.random(self.min_area, self.max_area)
-
-        # during training, the number of flights will increase from  1 to 10
         self.num_flights = number_flights_training
-
-        # create random flights
         self.flights = []
         tol = self.distance_init_buffer * self.tol
         min_distance = self.distance_init_buffer * self.min_distance
+        
         while len(self.flights) < self.num_flights:
             valid = True
             candidate = Flight.random(self.airspace, self.min_speed, self.max_speed, tol)
-
-            # ensure that candidate is not in conflict
             for f in self.flights:
-                if candidate.position.distance(f.position) < min_distance:
+                # Replaced shapely distance with math.hypot for fast reset
+                if math.hypot(candidate.position.x - f.position.x, candidate.position.y - f.position.y) < min_distance:
                     valid = False
                     break
             if valid:
                 self.flights.append(candidate)
 
-        # initialise steps counter
         self.i = 0
-
-        # clean conflicts and done sets
         self.conflicts = set()
         self.done = set()
 
-        # reset screen
         minx, miny, maxx, maxy = self.airspace.polygon.buffer(10 * u.nm).bounds
         self.world_bounds = (minx, miny, maxx, maxy)
 
-        # return initial observation
         return self.observation()
     
-
     def render(self) -> None:
-        """
-        Renders the environment (pygame replacement for gym.envs.classic_control.rendering)
-        """
-
-        # -------------------------------------------------
-        # initialize viewer (once)
-        # -------------------------------------------------
         if not hasattr(self, "screen"):
             pygame.init()
-
             self.screen_width, self.screen_height = 600, 600
-            self.screen = pygame.display.set_mode( (self.screen_width, self.screen_height) )
+            self.screen = pygame.display.set_mode((self.screen_width, self.screen_height))
             pygame.display.set_caption("Airspace")
-
-            # world bounds 
             minx, miny, maxx, maxy = self.airspace.polygon.buffer(10 * u.nm).bounds
             self.world_bounds = (minx, miny, maxx, maxy)
 
-        # -------------------------------------------------
-        # helper: world → screen coordinates
-        # -------------------------------------------------
         def world_to_screen(x, y):
             minx, miny, maxx, maxy = self.world_bounds
-
             sx = int((x - minx) / (maxx - minx) * self.screen_width)
-            sy = int(self.screen_height - (y - miny) / (maxy - miny) * self.screen_height )
-
+            sy = int(self.screen_height - (y - miny) / (maxy - miny) * self.screen_height)
             return sx, sy
 
-        # -------------------------------------------------
-        # background
-        # -------------------------------------------------
         self.screen.fill(BLACK)
 
-        # -------------------------------------------------
-        # airspace boundary
-        # -------------------------------------------------
         sector_pts = [
             world_to_screen(x, y)
             for x, y in self.airspace.polygon.boundary.coords
         ]
         pygame.draw.lines(self.screen, WHITE, False, sector_pts, 1)
 
-        # -------------------------------------------------
-        # flights
-        # -------------------------------------------------
         for i, f in enumerate(self.flights):
             if i in self.done:
                 continue
 
             color = RED if i in self.conflicts else BLUE
 
-            # safety circle
             cx, cy = world_to_screen(
                 f.reported_position.x,
                 f.reported_position.y
@@ -526,22 +368,16 @@ class Environment(gym.Env):
 
             pygame.draw.circle(self.screen, color, (cx, cy), radius, 1)
 
-            # flight plan
             plan = LineString([f.reported_position, f.target])
             plan_pts = [world_to_screen(x, y) for x, y in plan.coords]
             pygame.draw.lines(self.screen, color, False, plan_pts, 1)
 
-            # prediction
             prediction = LineString([f.reported_position, f.prediction])
             pred_pts = [world_to_screen(x, y) for x, y in prediction.coords]
             pygame.draw.lines(self.screen, color, False, pred_pts, 4)
 
-        # -------------------------------------------------
-        # update display + keep window responsive
-        # -------------------------------------------------
         pygame.display.flip()
         pygame.event.pump()
-
 
     def close(self):
         if hasattr(self, "screen"):
