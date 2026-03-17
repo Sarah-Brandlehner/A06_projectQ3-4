@@ -17,6 +17,7 @@ GREEN = [0, 255, 0]
 BLUE = [0, 0, 255]
 BLACK = [0, 0, 0]
 RED = [255, 0, 0]
+YELLOW = [255, 255, 0]
 
 # Position uncertainty vars
 ENABLE_POSITION_UNCERTAINTY = False
@@ -72,6 +73,7 @@ class Environment(gym.Env):
         self.restricted_airspace = None
         self.flights = [] # list of flights
         self.conflicts = set()  # set of flights that are in conflict
+        self.restricted_airspace_intrusions = set()  # set of flights in restricted airspace
         self.done = set()  # set of flights that reached the target
         self.i = None
         
@@ -97,11 +99,12 @@ class Environment(gym.Env):
 
     def reward(self) -> List:
         # Penalties per sub-step (accumulated across ACTION_FREQUENCY steps in wrapper)
-        # Effective per RL step: drift ≈ -2.5, conflict = -10.0, target = +1.0
-        drifts     = self.drift_penalties() * -0.3
-        conflicts  = self.conflict_penalties() * -4.0
-        target     = self.reachedTarget() * 1.0
-        tot_reward = drifts + conflicts + target
+        # Effective per RL step: drift ≈ -2.5, conflict = -10.0, restricted = -5.0, target = +1.0
+        drifts          = self.drift_penalties() * -0.3
+        conflicts       = self.conflict_penalties() * -4.0
+        restricted      = self.restricted_airspace_penalties() * -2.0
+        target          = self.reachedTarget() * 1.0
+        tot_reward      = drifts + conflicts + restricted + target
         return tot_reward
 
     def reachedTarget(self):
@@ -133,12 +136,22 @@ class Environment(gym.Env):
             if i not in self.done:
                 drift[i] = abs(f.drift)
         return drift
+    
+    def restricted_airspace_penalties(self):
+        """
+        Check if each flight is in restricted airspace and return penalty flag
+        """
+        penalties = np.zeros(self.num_flights)
+        for i, f in enumerate(self.flights):
+            if i not in self.done and self.restricted_airspace and f.in_restricted_airspace(self.restricted_airspace):
+                penalties[i] = 1
+        return penalties
 
     def observation(self) -> List:
         """
         Returns the observation of each agent using fast NumPy vectorization.
-        Layout (5*N + 5): cur_dis, pred_dis, dx, dy, trackdif, airspeed,
-        optimal_airspeed, target_dist, sin(drift), cos(drift)
+        Layout (5*N + 7): cur_dis, pred_dis, dx, dy, trackdif, airspeed,
+        optimal_airspeed, target_dist, sin(drift), cos(drift), in_restricted, heading_into_restricted
         """
         if self.num_flights == 0:
             return []
@@ -210,6 +223,10 @@ class Environment(gym.Env):
             obs.append(math.hypot(f.position.x - f.target.x, f.position.y - f.target.y))
             obs.append(math.sin(float(f.drift)))
             obs.append(math.cos(float(f.drift)))
+            
+            # Restricted airspace state (as binary 0/1)
+            obs.append(1.0 if f.in_restricted_airspace(self.restricted_airspace) else 0.0)
+            obs.append(1.0 if f.heading_into_restricted_airspace(self.restricted_airspace) else 0.0)
 
             observations_all.append(obs)
 
@@ -238,6 +255,19 @@ class Environment(gym.Env):
         for r, c in zip(rows, cols):
             if r != c:
                 self.conflicts.update((active[r], active[c]))
+
+    def update_restricted_airspace_intrusions(self) -> None:
+        """
+        Updates the set of flights that are in the restricted airspace
+        """
+        self.restricted_airspace_intrusions = set()
+        
+        if self.restricted_airspace is None:
+            return
+        
+        for i, f in enumerate(self.flights):
+            if i not in self.done and f.in_restricted_airspace(self.restricted_airspace):
+                self.restricted_airspace_intrusions.add(i)
 
     def update_done(self) -> None:
         """
@@ -281,6 +311,7 @@ class Environment(gym.Env):
         self.update_positions()
         self.update_done()
         self.update_conflicts()
+        self.update_restricted_airspace_intrusions()
         rew = self.reward()
         obs = self.observation()
         self.i += 1
@@ -321,6 +352,7 @@ class Environment(gym.Env):
 
         self.i = 0
         self.conflicts = set()
+        self.restricted_airspace_intrusions = set()
         self.done = set()
 
         minx, miny, maxx, maxy = self.airspace.polygon.buffer(10 * u.nm).bounds
@@ -364,7 +396,13 @@ class Environment(gym.Env):
             if i in self.done:
                 continue
 
-            color = RED if i in self.conflicts else BLUE
+            # Determine color: RED for conflict, YELLOW for restricted airspace, BLUE for normal
+            if i in self.conflicts:
+                color = RED
+            elif i in self.restricted_airspace_intrusions:
+                color = YELLOW
+            else:
+                color = BLUE
 
             cx, cy = world_to_screen(
                 f.reported_position.x,

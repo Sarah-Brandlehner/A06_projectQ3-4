@@ -1,7 +1,7 @@
 """
 Definitions module
 """
-from shapely.geometry import Point, Polygon
+from shapely.geometry import Point, Polygon, LineString
 from dataclasses import dataclass, field
 import atcenv.units as u
 import math
@@ -34,7 +34,7 @@ class Airspace:
             y = r * math.sin(alpha)
             return Point(x, y)
 
-        p = [random_point_in_circle(R) for _ in range(4)]
+        p = [random_point_in_circle(R) for _ in range(5)]
         polygon = Polygon(p).convex_hull
 
         while polygon.area < min_area:
@@ -177,6 +177,38 @@ class Flight:
             return (u.circle + drift)
         else:
             return drift
+
+    def in_restricted_airspace(self, restricted_airspace: 'RestrictedAirspace') -> bool:
+        """
+        Check if the aircraft is currently in the restricted airspace
+        
+        :param restricted_airspace: RestrictedAirspace object
+        :return: True if aircraft is in restricted airspace, False otherwise
+        """
+        if restricted_airspace is None:
+            return False
+        return restricted_airspace.polygon.contains(self.position)
+
+    def heading_into_restricted_airspace(self, restricted_airspace: 'RestrictedAirspace', lookahead: float = 50000.0) -> bool:
+        """
+        Check if the aircraft's current heading line intersects with the restricted airspace
+        
+        :param restricted_airspace: RestrictedAirspace object
+        :param lookahead: distance to look ahead along the current track (in meters), default 50km
+        :return: True if heading line intersects restricted airspace, False otherwise
+        """
+        if restricted_airspace is None:
+            return False
+        
+        # Create a line from current position extending in the direction of current track
+        dx = math.sin(self.track) * lookahead
+        dy = math.cos(self.track) * lookahead
+        
+        end_point = Point(self.position.x + dx, self.position.y + dy)
+        heading_line = LineString([self.position, end_point])
+        
+        # Check if the heading line intersects with the restricted airspace boundary
+        return heading_line.intersects(restricted_airspace.polygon)
 
     @classmethod
     def random(cls, airspace: Airspace, min_speed: float, max_speed: float, tol: float = 0.):

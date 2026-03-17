@@ -48,6 +48,13 @@ def normalize_obs(raw_obs):
     obs[5*n]     = (obs[5*n] - 230.0) / 30.0
     obs[5*n+1]   = (obs[5*n+1] - 230.0) / 30.0
     obs[5*n+2]   = (obs[5*n+2] - TARGET_DIST_NORM * 0.5) / (TARGET_DIST_NORM * 0.5)
+    
+    # For backward compatibility with models trained on old observation space (15),
+    # truncate to first 15 elements. The new restricted airspace flags (last 2 elements)
+    # will be available for new models trained with expanded observation space (17).
+    #obs = obs[:5*n+3]  # Keep only first 15 elements
+    # Remove this when all models are trained with the expanded observation space (17) that includes restricted airspace flags.
+    
     return np.clip(obs, -1.0, 1.0).astype(np.float32)
 
 
@@ -105,7 +112,7 @@ def record_episode(model, num_flights=5, deploy_all=True):
     raw_obs_list = env.reset(num_flights)
 
     # Record initial positions and targets
-    trajectories = {i: {"x": [], "y": [], "conflicts": []} for i in range(num_flights)}
+    trajectories = {i: {"x": [], "y": [], "conflicts": [], "restricted_intrusions": []} for i in range(num_flights)}
     targets = {}
     for i, f in enumerate(env.flights):
         targets[i] = (f.target.x, f.target.y)
@@ -113,6 +120,7 @@ def record_episode(model, num_flights=5, deploy_all=True):
     done = False
     step = 0
     total_conflicts = 0
+    total_restricted_intrusions = 0
 
     while not done:
         n_active = len(env.flights) - len(env.done)
@@ -133,6 +141,7 @@ def record_episode(model, num_flights=5, deploy_all=True):
             trajectories[i]["x"].append(f.position.x)
             trajectories[i]["y"].append(f.position.y)
             trajectories[i]["conflicts"].append(i in env.conflicts)
+            trajectories[i]["restricted_intrusions"].append(i in env.restricted_airspace_intrusions)
 
         # Step with ACTION_FREQUENCY
         for _ in range(ACTION_FREQUENCY):
@@ -143,6 +152,7 @@ def record_episode(model, num_flights=5, deploy_all=True):
             actions = np.zeros((len(env.flights) - len(env.done), 2), dtype=np.float32)
 
         total_conflicts += len(env.conflicts)
+        total_restricted_intrusions += len(env.restricted_airspace_intrusions)
         step += 1
 
     # Record final positions
@@ -150,6 +160,7 @@ def record_episode(model, num_flights=5, deploy_all=True):
         trajectories[i]["x"].append(f.position.x)
         trajectories[i]["y"].append(f.position.y)
         trajectories[i]["conflicts"].append(i in env.conflicts)
+        trajectories[i]["restricted_intrusions"].append(i in env.restricted_airspace_intrusions)
 
     env.close()
 
@@ -157,14 +168,14 @@ def record_episode(model, num_flights=5, deploy_all=True):
     airspace_coords = list(env.airspace.polygon.exterior.coords)
     restricted_airspace_coords = list(env.restricted_airspace.polygon.exterior.coords) if env.restricted_airspace else []
 
-    return trajectories, targets, airspace_coords, restricted_airspace_coords, total_conflicts
+    return trajectories, targets, airspace_coords, restricted_airspace_coords, total_conflicts, total_restricted_intrusions
 
 
 def plot_trajectories(model_path, num_flights=5, deploy_all=True,
                       save_path="results/plots/trajectories.png"):
     """Plot aircraft trajectories for one episode."""
     model = SAC.load(model_path)
-    trajectories, targets, airspace, restricted_airspace, total_conflicts = record_episode(
+    trajectories, targets, airspace, restricted_airspace, total_conflicts, total_restricted_intrusions = record_episode(
         model, num_flights, deploy_all
     )
 
@@ -188,11 +199,19 @@ def plot_trajectories(model_path, num_flights=5, deploy_all=True,
         x = np.array(traj["x"]) / 1000  # Convert to km
         y = np.array(traj["y"]) / 1000
         conflicts = traj["conflicts"]
+        restricted_intrusions = traj["restricted_intrusions"]
 
-        # Plot trajectory with color indicating conflicts
+        # Plot trajectory with color indicating conflicts and restricted airspace intrusions
         for j in range(len(x) - 1):
-            color = "red" if conflicts[j] else colors[i]
-            linewidth = 3 if conflicts[j] else 1.5
+            if conflicts[j]:
+                color = "red"
+                linewidth = 3
+            elif restricted_intrusions[j]:
+                color = "yellow"
+                linewidth = 2
+            else:
+                color = colors[i]
+                linewidth = 1.5
             ax.plot([x[j], x[j+1]], [y[j], y[j+1]], color=color, linewidth=linewidth)
 
         # Start position (circle)
@@ -209,11 +228,12 @@ def plot_trajectories(model_path, num_flights=5, deploy_all=True,
     start_patch = mpatches.Patch(color="gray", label="● Start")
     target_patch = mpatches.Patch(color="gray", label="★ Target")
     conflict_patch = mpatches.Patch(color="red", label="— Conflict")
-    ax.legend(handles=[start_patch, target_patch, conflict_patch], loc="upper right")
+    restricted_patch = mpatches.Patch(color="yellow", label="— Restricted Intrusion")
+    ax.legend(handles=[start_patch, target_patch, conflict_patch, restricted_patch], loc="upper right")
 
     mode = "All agents" if deploy_all else "Single actor"
     ax.set_title(f"Aircraft Trajectories ({mode}, {num_flights} flights, "
-                 f"{total_conflicts} conflicts)", fontsize=13)
+                 f"{total_conflicts} conflicts, {total_restricted_intrusions} restricted intrusions)", fontsize=13)
     ax.set_xlabel("X (km)")
     ax.set_ylabel("Y (km)")
     ax.set_aspect("equal")
