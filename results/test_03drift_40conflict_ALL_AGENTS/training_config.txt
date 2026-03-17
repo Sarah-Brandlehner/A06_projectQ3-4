@@ -1,11 +1,11 @@
 Training Configuration
 ==================================================
-Date: 2026-03-10 17:18:33
+Date: 2026-03-17 14:06:36
 Run name: test_03drift_40conflict_ALL_AGENTS
 
 --- Training Parameters ---
 Mode:            ALL AGENTS (Deploy-all)
-Timesteps:       50000
+Timesteps:       400000
 Num flights:     10
 Num envs:        8
 Algorithm:       SAC (MlpPolicy)
