@@ -62,7 +62,6 @@ class ATCEnvWrapper(gym.Env):
     def _normalize_obs(self, raw_obs):
         """
         Normalize raw observation vector to approx [-1, 1] range.
-    
 
         Raw obs layout (with NUMBER_INTRUDERS_STATE=2):
           [0:2]   distances to 2 closest intruders (meters)
@@ -81,7 +80,7 @@ class ATCEnvWrapper(gym.Env):
         n = NUMBER_INTRUDERS_STATE
 
         # Intruder distances: center around typical separation, scale tightly
-        # Reference: (dist - 50000) / 15000  →  we use similar approach
+        # Reference: (dist - 50000) / 15000
         obs[0:n]     = (obs[0:n] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
         obs[n:2*n]   = (obs[n:2*n] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
 
@@ -93,14 +92,13 @@ class ATCEnvWrapper(gym.Env):
         obs[4*n:5*n] = obs[4*n:5*n] / np.pi
 
         # Airspeeds: center around typical speed (~230 m/s, which is ~450 kt)
-        # Speed range is 400-500 kt = 206-257 m/s, so ±30 m/s range
         obs[5*n]     = (obs[5*n] - 230.0) / 30.0
         obs[5*n+1]   = (obs[5*n+1] - 230.0) / 30.0
 
         # Distance to target: normalize by larger range (targets can be far)
         obs[5*n+2]   = (obs[5*n+2] - TARGET_DIST_NORM * 0.5) / (TARGET_DIST_NORM * 0.5)
 
-        
+        # sin/cos drift: already in [-1, 1]
 
         return np.clip(obs, -1.0, 1.0).astype(np.float32)
 

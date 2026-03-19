@@ -33,8 +33,7 @@ ENABLE_DELAY = False
 MAXIMUM_DELAY = 3 # s
 PROB_DELAY = 0.1
 
-NUMBER_INTRUDERS_STATE = 5
-NUMBER_INTRUDERS_STATE = 2
+NUMBER_INTRUDERS_STATE = 2  # start with 2, can try 4 later as single change
 MAX_DISTANCE = 250*u.nm
 MAX_BEARING = math.pi
 
@@ -96,8 +95,10 @@ class Environment(gym.Env):
         return None
 
     def reward(self) -> List:
-        drifts     = self.drift_penalties() * -0.1
-        conflicts  = self.conflict_penalties() * -5.0
+        # Penalties per sub-step (accumulated across ACTION_FREQUENCY steps in wrapper)
+        # Effective per RL step: drift ≈ -2.5, conflict = -10.0, target = +1.0
+        drifts     = self.drift_penalties() * -0.3
+        conflicts  = self.conflict_penalties() * -4.0
         target     = self.reachedTarget() * 1.0
         tot_reward = drifts + conflicts + target
         return tot_reward
@@ -134,19 +135,21 @@ class Environment(gym.Env):
 
     def observation(self) -> List:
         """
-        Returns the observation of each agent using fast NumPy vectorization
+        Returns the observation of each agent using fast NumPy vectorization.
+        Layout (5*N + 5): cur_dis, pred_dis, dx, dy, trackdif, airspeed,
+        optimal_airspeed, target_dist, sin(drift), cos(drift)
         """
         if self.num_flights == 0:
             return []
 
-        # 1. Extract all flight data into fast flat arrays
+        # Extract flight data into arrays
         pos_x = np.array([f.position.x for f in self.flights])
         pos_y = np.array([f.position.y for f in self.flights])
         pred_x = np.array([f.prediction.x for f in self.flights])
         pred_y = np.array([f.prediction.y for f in self.flights])
         tracks = np.array([f.track for f in self.flights])
 
-        # 2. Vectorized Distance Calculations (N x N matrices)
+        # Distance matrices
         dx = pos_x[np.newaxis, :] - pos_x[:, np.newaxis]
         dy = pos_y[np.newaxis, :] - pos_y[:, np.newaxis]
         cur_dis = np.hypot(dx, dy)
@@ -155,54 +158,50 @@ class Environment(gym.Env):
         p_dy = pred_y[np.newaxis, :] - pred_y[:, np.newaxis]
         distance_all = np.hypot(p_dx, p_dy)
 
-        # 3. Vectorized Bearings
+        # Bearings
         compass = np.arctan2(dx, dy)
         compass = compass - tracks[:, np.newaxis]
         compass = (compass + u.circle) % u.circle
         compass[compass > math.pi] -= u.circle
         bearing_all = compass
 
-        # 4. Vectorized Track Differences
+        # Track differences
         trackdif_all = tracks[:, np.newaxis] - tracks[np.newaxis, :]
 
-        # 5. DX / DY components
+        # DX / DY components
         dx_all = np.sin(bearing_all) * cur_dis
         dy_all = np.cos(bearing_all) * cur_dis
 
-        # 6. Mask out 'done' flights and self-comparisons
+        # Mask out done flights and self
         done_mask = np.zeros(self.num_flights, dtype=bool)
         for d in self.done:
             done_mask[d] = True
-
         for i in range(self.num_flights):
             cur_dis[i, i] = MAX_DISTANCE
             distance_all[i, i] = MAX_DISTANCE
             cur_dis[i, done_mask] = MAX_DISTANCE
             distance_all[i, done_mask] = MAX_DISTANCE
 
-        # 7. Construct final observation output
         observations_all = []
         for i, f in enumerate(self.flights):
             if i in self.done:
                 continue
 
-            # Find closest intruders based on predicted distance
             closest_intruders = np.argsort(distance_all[i])[:NUMBER_INTRUDERS_STATE]
             obs = []
 
             def add_padded(vals_array):
                 vals = vals_array[i, closest_intruders].tolist()
                 obs.extend(vals)
-                # Pad if there are fewer active flights than NUMBER_INTRUDERS_STATE
                 if len(vals) < NUMBER_INTRUDERS_STATE:
                     pad_val = MAX_DISTANCE if vals_array is cur_dis else 0
                     obs.extend([pad_val] * (NUMBER_INTRUDERS_STATE - len(vals)))
 
-            add_padded(cur_dis)       # distance to closest
-            add_padded(distance_all)  # predicted distance
-            add_padded(dx_all)        # relative bearing dx
-            add_padded(dy_all)        # relative bearing dy
-            add_padded(trackdif_all)  # track diff
+            add_padded(cur_dis)
+            add_padded(distance_all)
+            add_padded(dx_all)
+            add_padded(dy_all)
+            add_padded(trackdif_all)
 
             # Ownship state
             obs.append(f.airspeed)
@@ -289,7 +288,7 @@ class Environment(gym.Env):
         done_t = (self.i == self.max_episode_len) 
         done_e = (len(self.done) == self.num_flights)
 
-        # self.render() 
+       # self.render() # comment out for training    
 
         return obs, rew, done_t, done_e, {}
 
