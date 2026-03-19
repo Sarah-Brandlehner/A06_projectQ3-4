@@ -10,7 +10,8 @@ Usage:
     
     python train_sac.py --timesteps 200000 --num-flights 10 --run-name "test2_03drift_40conflict_ALL_AGENTS" --train-all
 
-    python train_sac.py --timesteps 2500000 --num-flights 10 --num-envs 8 --run-name "05drift_08conflict_1.5target_02proximity_ALL_AGENTS" --train-all
+    python train_sac.py --timesteps 2000000 --num-flights 10 --num-envs 8 --run-name "minimal_reward_ALL_AGENTS" --train-all
+    python train_sac.py --timesteps 3000000 --num-flights 10 --num-envs 8 --train-all --run-name "4_intruders_unlocked_physics"
 
     python train_sac.py --run-name run_1_baseline
 """
@@ -50,7 +51,7 @@ class RewardBreakdownCallback(BaseCallback):
     def __init__(self, log_freq: int = 500, window: int = 200, verbose: int = 0):
         super().__init__(verbose)
         self.log_freq = log_freq
-        self._component_names = ["drift", "conflict", "target", "proximity"]
+        self._component_names = ["drift", "conflict", "alert", "target"]
         self._buffers = {name: deque(maxlen=window) for name in self._component_names}
 
     def _on_step(self) -> bool:
@@ -188,24 +189,38 @@ def train(args):
         eval_env = DummyVecEnv([make_env_fn])
         effective_envs = args.num_envs
 
-    # 4. Create SAC model
-    model = SAC(
-        "MlpPolicy",
-        train_env,
-        learning_rate=3e-4,             # 1e-3
-        buffer_size=500_000,            # 100_000
-        batch_size=256,                 # 256
-        tau=0.005,                      # 0.005
-        gamma=0.99,                     # 0.99
-        learning_starts=5000,           # 1000
-        
-        train_freq=8,
-        gradient_steps=8,
-        
-        ent_coef="auto",
-        verbose=1,
-        tensorboard_log=f"{run_dir}/tensorboard/",
-    )
+    # 4. Create or Load SAC model
+    if args.load:
+        print(f"Loading pre-trained model from {args.load}...")
+        model = SAC.load(
+            args.load,
+            env=train_env,
+            custom_objects={
+                "learning_rate": 1e-5,
+                "buffer_size": 1_000_000, 
+                "batch_size": 1024,
+                "ent_coef": 0.05,
+            }
+        )
+        model.tensorboard_log = f"{run_dir}/tensorboard/"
+    else:
+        model = SAC(
+            "MlpPolicy",
+            train_env,
+            learning_rate=1e-4,             # 1e-3
+            buffer_size=1_000_000,          # 100_000 (increased for multi-agent)
+            batch_size=1024,                # 256 (increased for multi-agent)
+            tau=0.005,                      # 0.005
+            gamma=0.99,                     # 0.99
+            learning_starts=5000,           # 1000
+            
+            train_freq=8,
+            gradient_steps=8,
+            
+            ent_coef=0.05,                  # "auto" (fixed lower to force exploitation of good paths)
+            verbose=1,
+            tensorboard_log=f"{run_dir}/tensorboard/",
+        )
 
     eval_freq_adjusted = max(5000 // effective_envs, 1)
     save_freq_adjusted = max(10000 // effective_envs, 1)
@@ -246,6 +261,8 @@ if __name__ == "__main__":
                         help="Name for the results folder. If not provided, a timestamp is used.")
     parser.add_argument("--train-all", action="store_true",
                         help="Train with ALL agents simultaneously (Parameter Sharing) instead of a single actor")
+    parser.add_argument("--load", type=str, default=None,
+                        help="Path to a pre-trained model .zip file to resume from.")
     
     args = parser.parse_args()
     train(args)

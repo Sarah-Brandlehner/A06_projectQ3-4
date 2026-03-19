@@ -131,8 +131,6 @@ class ATCEnvWrapper(gym.Env):
                 accumulated_reward += float(rewards[0])
             if done_t or done_e:
                 break
-            # After first step, actor maintains heading (don't re-apply delta)
-            actions[0] = [0.0, 0.0]
 
         # Actor's accumulated reward across all sub-steps
         actor_reward = accumulated_reward
