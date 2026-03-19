@@ -97,11 +97,21 @@ class Environment(gym.Env):
     def reward(self) -> List:
         # Penalties per sub-step (accumulated across ACTION_FREQUENCY steps in wrapper)
         # Effective per RL step: drift ≈ -2.5, conflict = -10.0, target = +1.0
-        drifts     = self.drift_penalties() * -0.3
-        conflicts  = self.conflict_penalties() * -4.0
-        target     = self.reachedTarget() * 1.0
-        tot_reward = drifts + conflicts + target
+        drifts     = self.drift_penalties() * -0.5
+        conflicts  = self.conflict_penalties() * -8
+        target     = self.reachedTarget() * 1.5
+        # proximity  = self.proximity_penalties() * -2.0 # added proximity penalty
+        tot_reward = drifts + conflicts + target #+ proximity
         return tot_reward
+
+    def reward_components(self):
+        """Return per-flight arrays for each weighted reward component."""
+        return {
+            "drift":     self.drift_penalties() * -0.5,
+            "conflict":  self.conflict_penalties() * -8,
+            "target":    self.reachedTarget() * 1.5,
+            "proximity": self.proximity_penalties() * -2.0,
+        }
 
     def reachedTarget(self):
         target = np.zeros(self.num_flights)
@@ -132,6 +142,31 @@ class Environment(gym.Env):
             if i not in self.done:
                 drift[i] = abs(f.drift)
         return drift
+
+    def proximity_penalties(self):
+        """Smooth penalty that increases as aircraft get closer to separation minimum."""
+        penalties = np.zeros(self.num_flights)
+        active = [i for i in range(self.num_flights) if i not in self.done]
+        if len(active) < 2:
+            return penalties
+        
+        positions = np.array([[self.flights[i].position.x, self.flights[i].position.y] for i in active])
+        for idx_a, i in enumerate(active):
+            for idx_b, j in enumerate(active):
+                if i >= j:
+                    continue
+                dist = np.hypot(positions[idx_a, 0] - positions[idx_b, 0],
+                            positions[idx_a, 1] - positions[idx_b, 1])
+                # Penalty ramps up as distance approaches min_distance
+                # Zero penalty beyond 2x separation minimum
+                threshold = self.min_distance * 2.0
+                if dist < threshold:
+                    # Linear ramp: 0 at threshold, 1 at min_distance
+                    penalty = max(0, (threshold - dist) / (threshold - self.min_distance))
+                    penalties[i] += penalty
+                    penalties[j] += penalty
+        return penalties
+
 
     def observation(self) -> List:
         """

@@ -12,19 +12,25 @@ Commands:
  
     To run the visualization in a specific run directory, use the --run-dir argument:
 
-    python visualize.py compare --run-dir results/test_03drift_40conflict
-    python visualize.py evaluate --run-dir results/test_03drift_40conflict
+    python visualize.py compare --run-dir results/05drift_08conflict_1.5target_02proximity_ALL_AGENTS
+    python visualize.py evaluate --run-dir results/05drift_08conflict_1.5target_02proximity_ALL_AGENTS
     python visualize.py training --run-dir results/test_03drift_40conflict
-    python visualize.py trajectory --run-dir results/test_03drift_40conflict
+    python visualize.py trajectory --run-dir results/test_03drift_100conflict_ALL_AGENTS
+    python visualize.py evaluate --run-dir results/05drift_08conflict_1.5target_02proximity_ALL_AGENTS --episodes 100 --workers 8
+    python visualize.py compare --run-dir results/05drift_06conflict_01target_02proximity_ALL_AGENTS --workers 8
+    python visualize.py training --run-dir results/<run> --workers 8
+    python visualize.py trajectory --run-dir results/<run> --workers 8
 
 """
 import argparse
 import os
 import sys
+import math
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
 from matplotlib.collections import LineCollection
+from concurrent.futures import ProcessPoolExecutor
 from stable_baselines3 import SAC
 
 from atcenv.env import Environment, NUMBER_INTRUDERS_STATE
@@ -221,19 +227,19 @@ def plot_trajectories(model_path, num_flights=5, deploy_all=True,
 
 # ────────────────────────── EVALUATION METRICS ──────────────────────────
 
-def run_evaluation(model_path, n_episodes=30, num_flights=5, deploy_all=True):
-    """Run evaluation and return per-episode metrics."""
+def _eval_episodes_worker(model_path, episode_indices, num_flights, deploy_all):
+    """Worker function that runs a batch of episodes (used by ProcessPoolExecutor)."""
     model = SAC.load(model_path)
     env = Environment(num_flights=num_flights)
 
-    metrics = {
+    local_metrics = {
         "conflicts": [],
         "targets_reached": [],
         "episode_length": [],
         "total_drift": [],
     }
 
-    for ep in range(n_episodes):
+    for ep in episode_indices:
         raw_obs_list = env.reset(num_flights)
         done = False
         ep_conflicts = 0
@@ -261,26 +267,58 @@ def run_evaluation(model_path, n_episodes=30, num_flights=5, deploy_all=True):
                 actions = np.zeros((len(env.flights) - len(env.done), 2), dtype=np.float32)
 
             ep_conflicts += len(env.conflicts)
-            # Sum absolute drift for all active agents
             for i, f in enumerate(env.flights):
                 if i not in env.done:
                     ep_drift += abs(f.drift)
             step += 1
 
-        metrics["conflicts"].append(ep_conflicts)
-        metrics["targets_reached"].append(len(env.done))
-        metrics["episode_length"].append(step)
-        metrics["total_drift"].append(ep_drift)
+        local_metrics["conflicts"].append(ep_conflicts)
+        local_metrics["targets_reached"].append(len(env.done))
+        local_metrics["episode_length"].append(step)
+        local_metrics["total_drift"].append(ep_drift)
 
     env.close()
+    return local_metrics
+
+
+def run_evaluation(model_path, n_episodes=30, num_flights=5, deploy_all=True, workers=1):
+    """Run evaluation and return per-episode metrics (parallelized across workers)."""
+    if workers <= 1:
+        # Single-process fallback
+        return _eval_episodes_worker(model_path, list(range(n_episodes)), num_flights, deploy_all)
+
+    # Split episodes across workers
+    episode_batches = [[] for _ in range(workers)]
+    for ep in range(n_episodes):
+        episode_batches[ep % workers].append(ep)
+    # Remove empty batches
+    episode_batches = [b for b in episode_batches if b]
+
+    metrics = {
+        "conflicts": [],
+        "targets_reached": [],
+        "episode_length": [],
+        "total_drift": [],
+    }
+
+    with ProcessPoolExecutor(max_workers=len(episode_batches)) as executor:
+        futures = [
+            executor.submit(_eval_episodes_worker, model_path, batch, num_flights, deploy_all)
+            for batch in episode_batches
+        ]
+        for future in futures:
+            result = future.result()
+            for key in metrics:
+                metrics[key].extend(result[key])
+
     return metrics
 
 
 def plot_evaluation(model_path, n_episodes=30, num_flights=5,
-                    save_path="results/plots/evaluation.png"):
+                    save_path="results/plots/evaluation.png", workers=1):
     """Run evaluation and plot summary metrics."""
-    print(f"Running {n_episodes} episodes...")
-    metrics = run_evaluation(model_path, n_episodes, num_flights, deploy_all=True)
+    print(f"Running {n_episodes} episodes across {workers} worker(s)...")
+    metrics = run_evaluation(model_path, n_episodes, num_flights, deploy_all=True, workers=workers)
 
     fig, axes = plt.subplots(2, 2, figsize=(14, 10))
 
@@ -335,9 +373,20 @@ def plot_evaluation(model_path, n_episodes=30, num_flights=5,
 
 # ────────────────────────── CHECKPOINT COMPARISON ──────────────────────────
 
+def _eval_checkpoint_worker(ckpt_path, step_num, n_episodes, num_flights):
+    """Worker to evaluate a single checkpoint (used by ProcessPoolExecutor)."""
+    metrics = _eval_episodes_worker(ckpt_path, list(range(n_episodes)), num_flights, deploy_all=True)
+    mean_c = np.mean(metrics["conflicts"])
+    mean_t = np.mean(metrics["targets_reached"])
+    cf = sum(1 for c in metrics["conflicts"] if c == 0)
+    cf_pct = 100 * cf / n_episodes
+    return step_num, mean_c, mean_t, cf_pct
+
+
 def compare_checkpoints(checkpoint_dir="results/checkpoints/",
                         n_episodes=20, num_flights=5,
-                        save_path="results/plots/checkpoint_comparison.png"):
+                        save_path="results/plots/checkpoint_comparison.png",
+                        workers=1):
     """Compare performance across training checkpoints."""
     checkpoints = sorted([
         f for f in os.listdir(checkpoint_dir) if f.endswith(".zip")
@@ -348,16 +397,38 @@ def compare_checkpoints(checkpoint_dir="results/checkpoints/",
     mean_targets = []
     conflict_free_pct = []
 
-    for ckpt in checkpoints:
-        ckpt_path = os.path.join(checkpoint_dir, ckpt)
-        step_num = int(ckpt.split("_")[-2])
-        steps.append(step_num)
-        print(f"Evaluating {ckpt} ({step_num} steps)...")
-        metrics = run_evaluation(ckpt_path, n_episodes, num_flights, deploy_all=True)
-        mean_conflicts.append(np.mean(metrics["conflicts"]))
-        mean_targets.append(np.mean(metrics["targets_reached"]))
-        cf = sum(1 for c in metrics["conflicts"] if c == 0)
-        conflict_free_pct.append(100 * cf / n_episodes)
+    if workers <= 1:
+        # Sequential fallback
+        for ckpt in checkpoints:
+            ckpt_path = os.path.join(checkpoint_dir, ckpt)
+            step_num = int(ckpt.split("_")[-2])
+            print(f"Evaluating {ckpt} ({step_num} steps)...")
+            metrics = _eval_episodes_worker(ckpt_path, list(range(n_episodes)), num_flights, deploy_all=True)
+            steps.append(step_num)
+            mean_conflicts.append(np.mean(metrics["conflicts"]))
+            mean_targets.append(np.mean(metrics["targets_reached"]))
+            cf = sum(1 for c in metrics["conflicts"] if c == 0)
+            conflict_free_pct.append(100 * cf / n_episodes)
+    else:
+        print(f"Evaluating {len(checkpoints)} checkpoints across {workers} worker(s)...")
+        with ProcessPoolExecutor(max_workers=workers) as executor:
+            futures = []
+            for ckpt in checkpoints:
+                ckpt_path = os.path.join(checkpoint_dir, ckpt)
+                step_num = int(ckpt.split("_")[-2])
+                futures.append(executor.submit(_eval_checkpoint_worker, ckpt_path, step_num, n_episodes, num_flights))
+            for future in futures:
+                step_num, mc, mt, cfp = future.result()
+                steps.append(step_num)
+                mean_conflicts.append(mc)
+                mean_targets.append(mt)
+                conflict_free_pct.append(cfp)
+        # Sort by step number since parallel results may arrive out of order
+        order = np.argsort(steps)
+        steps = [steps[i] for i in order]
+        mean_conflicts = [mean_conflicts[i] for i in order]
+        mean_targets = [mean_targets[i] for i in order]
+        conflict_free_pct = [conflict_free_pct[i] for i in order]
 
     fig, axes = plt.subplots(1, 3, figsize=(18, 5))
 
@@ -402,8 +473,10 @@ if __name__ == "__main__":
                         help="The results directory to analyze (e.g., results/test_03drift_40conflict)")
     parser.add_argument("--model-name", type=str, default="best_model/best_model.zip",
                         help="Which model inside the run-dir to evaluate")
-    parser.add_argument("--episodes", type=int, default=30)
-    parser.add_argument("--num-flights", type=int, default=5)
+    parser.add_argument("--episodes", type=int, default=100)
+    parser.add_argument("--num-flights", type=int, default=10)
+    parser.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) // 2),
+                        help="Number of parallel worker processes for evaluation")
     args = parser.parse_args()
 
     # Construct the full paths based on the run-dir
@@ -421,10 +494,12 @@ if __name__ == "__main__":
 
     elif args.command == "evaluate":
         plot_evaluation(model_path, args.episodes, args.num_flights,
-                        save_path=os.path.join(args.run_dir, "plots", "evaluation.png"))
+                        save_path=os.path.join(args.run_dir, "plots", "evaluation.png"),
+                        workers=args.workers)
 
     elif args.command == "compare":
         compare_checkpoints(checkpoint_dir=checkpoint_dir, 
                             n_episodes=args.episodes, 
                             num_flights=args.num_flights,
-                            save_path=os.path.join(args.run_dir, "plots", "checkpoint_comparison.png"))
+                            save_path=os.path.join(args.run_dir, "plots", "checkpoint_comparison.png"),
+                            workers=args.workers)
