@@ -10,7 +10,7 @@ Usage:
     
     python train_sac.py --timesteps 200000 --num-flights 10 --run-name "test2_03drift_40conflict_ALL_AGENTS" --train-all
 
-    python train_sac.py --timesteps 200000 --num-flights 10 --num-envs 8 --run-name "test_03drift_40conflict_ALL_AGENTS" --train-all
+    python train_sac.py --timesteps 1000000 --num-flights 10 --num-envs 24 --run-name "test_03drift_50conflict_ALL_AGENTS" --train-all
 
     python train_sac.py --run-name run_1_baseline
 """
