@@ -13,9 +13,9 @@ Commands:
     To run the visualization in a specific run directory, use the --run-dir argument:
 
     python visualize.py compare --run-dir results/test_03drift_40conflict
-    python visualize.py evaluate --run-dir results/test_03drift_40conflict
-    python visualize.py training --run-dir results/test_03drift_40conflict
-    python visualize.py trajectory --run-dir results/test_03drift_40conflict
+    python visualize.py evaluate --run-dir results/shared_reward
+    python visualize.py training --run-dir results/expanded_obs_matrix_4
+    python visualize.py trajectory --run-dir results/shared_reward
 
 """
 import argparse
@@ -49,11 +49,23 @@ def normalize_obs(raw_obs):
     obs[5*n+1]   = (obs[5*n+1] - 230.0) / 30.0
     obs[5*n+2]   = (obs[5*n+2] - TARGET_DIST_NORM * 0.5) / (TARGET_DIST_NORM * 0.5)
     
-    # For backward compatibility with models trained on old observation space (15),
-    # truncate to first 15 elements. The new restricted airspace flags (last 2 elements)
-    # will be available for new models trained with expanded observation space (17).
-    #obs = obs[:5*n+3]  # Keep only first 15 elements
-    # Remove this when all models are trained with the expanded observation space (17) that includes restricted airspace flags.
+    # Restricted airspace flags (already in [0, 1] range)
+    # obs[5*n+3] and obs[5*n+4] - no normalization needed
+    
+    # Closest 4 vertices of restricted airspace (distance, dx, dy for each)
+    # Normalize distances and positions similar to intruder data
+    vertex_start = 5*n + 5
+    for v in range(4):  # 4 vertices
+        vertex_idx = vertex_start + v * 3
+        if vertex_idx < len(obs):
+            # Distance
+            obs[vertex_idx] = (obs[vertex_idx] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
+        if vertex_idx + 1 < len(obs):
+            # dx
+            obs[vertex_idx + 1] = obs[vertex_idx + 1] / INTRUDER_POS_NORM
+        if vertex_idx + 2 < len(obs):
+            # dy
+            obs[vertex_idx + 2] = obs[vertex_idx + 2] / INTRUDER_POS_NORM
     
     return np.clip(obs, -1.0, 1.0).astype(np.float32)
 
@@ -429,8 +441,8 @@ if __name__ == "__main__":
                         help="The results directory to analyze (e.g., results/test_03drift_40conflict)")
     parser.add_argument("--model-name", type=str, default="best_model/best_model.zip",
                         help="Which model inside the run-dir to evaluate")
-    parser.add_argument("--episodes", type=int, default=30)
-    parser.add_argument("--num-flights", type=int, default=5)
+    parser.add_argument("--episodes", type=int, default=50)
+    parser.add_argument("--num-flights", type=int, default=10)
     args = parser.parse_args()
 
     # Construct the full paths based on the run-dir

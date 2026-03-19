@@ -98,14 +98,40 @@ class Environment(gym.Env):
         return None
 
     def reward(self) -> List:
-        # Penalties per sub-step (accumulated across ACTION_FREQUENCY steps in wrapper)
-        # Effective per RL step: drift ≈ -2.5, conflict = -10.0, restricted = -5.0, target = +1.0
-        drifts          = self.drift_penalties() * -0.3
-        conflicts       = self.conflict_penalties() * -4.0
-        restricted      = self.restricted_airspace_penalties() * -2.0
-        target          = self.reachedTarget() * 1.0
-        tot_reward      = drifts + conflicts + restricted + target
-        return tot_reward
+        # Calculate individual penalties/rewards per sub-step
+        # Effective per RL step: drift ≈ -1.25, conflict = -35.0, 
+        # restricted = -10.0, heading_into_restricted = -1.25, target = +37.5
+        # what kinda worked was -0.5 for drift (should be higher tho), -6 for conflict, -4 for restricted, -0.25 for heading, 10 for target
+        drifts                      = self.drift_penalties() * -0.6
+        conflicts                   = self.conflict_penalties() * -8.75
+        restricted                  = self.restricted_airspace_penalties() * -4
+        heading_into_restricted     = self.heading_into_restricted_penalties() * -0.25
+        target                      = self.reachedTarget() * 10
+        # -hits targets - -0.6, -7.5, -4, -0.25, +12
+        
+        # Individual rewards
+        individual_rewards = drifts + conflicts + restricted + heading_into_restricted + target
+        
+        # Shared reward: sum all individual rewards and distribute equally
+        # This encourages cooperation - all agents benefit from any agent's good behavior
+        total_reward = np.sum(individual_rewards)
+        num_active = self.num_flights - len(self.done)
+        
+        # Avoid division by zero
+        if num_active > 0:
+            shared_reward = total_reward / num_active
+        else:
+            shared_reward = 0.0
+        
+        # Return shared reward to all active agents, 0 to done agents
+        reward_list = []
+        for i in range(self.num_flights):
+            if i not in self.done:
+                reward_list.append(shared_reward)
+            else:
+                reward_list.append(0.0)
+        
+        return reward_list
 
     def reachedTarget(self):
         target = np.zeros(self.num_flights)
@@ -146,12 +172,23 @@ class Environment(gym.Env):
             if i not in self.done and self.restricted_airspace and f.in_restricted_airspace(self.restricted_airspace):
                 penalties[i] = 1
         return penalties
+    
+    def heading_into_restricted_penalties(self):
+        """
+        Check if each flight's heading vector points into restricted airspace and return penalty flag
+        """
+        penalties = np.zeros(self.num_flights)
+        for i, f in enumerate(self.flights):
+            if i not in self.done and self.restricted_airspace and f.heading_into_restricted_airspace(self.restricted_airspace):
+                penalties[i] = 1
+        return penalties
 
     def observation(self) -> List:
         """
         Returns the observation of each agent using fast NumPy vectorization.
-        Layout (5*N + 7): cur_dis, pred_dis, dx, dy, trackdif, airspeed,
-        optimal_airspeed, target_dist, sin(drift), cos(drift), in_restricted, heading_into_restricted
+        Layout (5*N + 19): cur_dis, pred_dis, dx, dy, trackdif, airspeed,
+        optimal_airspeed, target_dist, sin(drift), cos(drift), in_restricted, heading_into_restricted,
+        + 4 closest restricted vertices (distance, dx, dy for each)
         """
         if self.num_flights == 0:
             return []
@@ -227,6 +264,13 @@ class Environment(gym.Env):
             # Restricted airspace state (as binary 0/1)
             obs.append(1.0 if f.in_restricted_airspace(self.restricted_airspace) else 0.0)
             obs.append(1.0 if f.heading_into_restricted_airspace(self.restricted_airspace) else 0.0)
+            
+            # Closest 4 vertices of restricted airspace (distance, dx, dy for each)
+            closest_vertices = f.closest_restricted_vertices(self.restricted_airspace, num_vertices=4)
+            for distance, rel_dx, rel_dy in closest_vertices:
+                obs.append(distance)
+                obs.append(rel_dx)
+                obs.append(rel_dy)
 
             observations_all.append(obs)
 
@@ -309,10 +353,10 @@ class Environment(gym.Env):
     def step(self, action: List) -> Tuple[List, List, bool, bool, Dict]:
         self.resolution(action)
         self.update_positions()
+        rew = self.reward()
         self.update_done()
         self.update_conflicts()
         self.update_restricted_airspace_intrusions()
-        rew = self.reward()
         obs = self.observation()
         self.i += 1
         self.checkSpeedDif()
@@ -320,7 +364,7 @@ class Environment(gym.Env):
         done_t = (self.i == self.max_episode_len) 
         done_e = (len(self.done) == self.num_flights)
 
-        self.render() # comment out for training    
+        # self.render() # comment out for training    
 
         return obs, rew, done_t, done_e, {}
 

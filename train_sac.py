@@ -10,7 +10,7 @@ Usage:
     
     python train_sac.py --timesteps 200000 --num-flights 10 --run-name "test2_03drift_40conflict_ALL_AGENTS" --train-all
 
-    python train_sac.py --timesteps 200000 --num-flights 10 --num-envs 8 --run-name "test_03drift_40conflict_ALL_AGENTS" --train-all
+    python train_sac.py --timesteps 350000 --num-flights 10 --num-envs 8 --run-name "shared_reward_3" --train-all
 
     python train_sac.py --run-name run_1_baseline
 """
@@ -155,8 +155,8 @@ def train(args):
     model = SAC(
         "MlpPolicy",
         train_env,
-        learning_rate=1e-3,             # reference uses 1e-3
-        buffer_size=100_000,
+        learning_rate=5e-4,             # reference uses 1e-3, or maybe actually 1e-5
+        buffer_size=500_000,
         batch_size=256,
         tau=0.005,
         gamma=0.99,

@@ -210,6 +210,38 @@ class Flight:
         # Check if the heading line intersects with the restricted airspace boundary
         return heading_line.intersects(restricted_airspace.polygon)
 
+    def closest_restricted_vertices(self, restricted_airspace: 'RestrictedAirspace', num_vertices: int = 4):
+        """
+        Get the closest vertices of the restricted airspace polygon to this aircraft
+        
+        :param restricted_airspace: RestrictedAirspace object
+        :param num_vertices: number of closest vertices to return (default 3)
+        :return: list of tuples [(distance, dx, dy), ...] for the num_vertices closest vertices
+        """
+        if restricted_airspace is None:
+            # Return dummy values if no restricted airspace
+            return [(0.0, 0.0, 0.0)] * num_vertices
+        
+        vertices = list(restricted_airspace.polygon.exterior.coords)[:-1]  # Exclude the closing point
+        
+        # Calculate distances and relative positions to all vertices
+        vertex_data = []
+        for vertex in vertices:
+            v = Point(vertex)
+            distance = self.position.distance(v)
+            rel_dx = v.x - self.position.x
+            rel_dy = v.y - self.position.y
+            vertex_data.append((distance, rel_dx, rel_dy))
+        
+        # Sort by distance and return the closest num_vertices
+        vertex_data.sort(key=lambda x: x[0])
+        
+        # Pad with zeros if we don't have enough vertices
+        while len(vertex_data) < num_vertices:
+            vertex_data.append((0.0, 0.0, 0.0))
+        
+        return vertex_data[:num_vertices]
+
     @classmethod
     def random(cls, airspace: Airspace, min_speed: float, max_speed: float, tol: float = 0.):
         """

@@ -14,9 +14,9 @@ from atcenv.env import Environment, NUMBER_INTRUDERS_STATE
 # Number of sim steps per RL action (reference uses 5-10)
 ACTION_FREQUENCY = 5
 
-# Observation size: 5 * NUMBER_INTRUDERS_STATE + 7
-# (5 intruder state values + 5 ownship values + 2 restricted airspace values)
-OBS_SIZE = 5 * NUMBER_INTRUDERS_STATE + 7
+# Observation size: 5 * NUMBER_INTRUDERS_STATE + 16
+# (5 intruder state values + 5 ownship values + 2 restricted airspace flags + 12 closest vertex values)
+OBS_SIZE = 5 * NUMBER_INTRUDERS_STATE + 19
 
 # Normalization constants (matched to reference bluesky-gym ranges)
 INTRUDER_DIST_NORM = 50000.0   # ~27 NM — intruder distances
