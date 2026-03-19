@@ -75,6 +75,13 @@ class SharedPolicyVecEnv(vec_env.VecEnv):
         # Keep track of rewards accumulated over ACTION_FREQUENCY sub-steps
         self.accumulated_rewards = np.zeros(self.num_flights, dtype=np.float32)
 
+        # Per-component reward accumulators for tracking
+        self._component_names = ["drift", "conflict", "target", "proximity"]
+        self._accumulated_components = {
+            name: np.zeros(self.num_flights, dtype=np.float32)
+            for name in self._component_names
+        }
+
     def _normalize_obs(self, raw_obs):
         """Normalize a single observation vector using sb3_wrapper constants."""
         obs = np.array(raw_obs, dtype=np.float32)
@@ -107,6 +114,8 @@ class SharedPolicyVecEnv(vec_env.VecEnv):
         """SB3 calls this second. We execute the actions in the env here."""
         
         self.accumulated_rewards.fill(0.0)
+        for name in self._component_names:
+            self._accumulated_components[name].fill(0.0)
         
         # We must track actual environment dones separately, 
         # because SB3 expects an env to instantly reset when done.
@@ -130,6 +139,12 @@ class SharedPolicyVecEnv(vec_env.VecEnv):
                     # Sum up the rewards across the sub-steps
                     self.accumulated_rewards[agent_num] += float(rewards[idx])
 
+            # Accumulate per-component rewards
+            components = self._env.reward_components()
+            for name in self._component_names:
+                for idx, agent_num in enumerate(active_indices):
+                    self._accumulated_components[name][agent_num] += float(components[name][agent_num])
+
             if done_t or done_e:
                 episode_terminated = done_e
                 episode_truncated = done_t
@@ -141,6 +156,11 @@ class SharedPolicyVecEnv(vec_env.VecEnv):
 
         # Assign accumulated rewards to the buffer
         self.buf_rews[:] = self.accumulated_rewards
+
+        # Write per-component rewards into info dicts
+        for i in range(self.num_flights):
+            for name in self._component_names:
+                self.buf_infos[i][f"reward_{name}"] = float(self._accumulated_components[name][i])
 
         # Calculate who is still active AFTER the ACTION_FREQUENCY steps
         active_indices_now = [i for i in range(self.num_flights) if i not in self._env.done]

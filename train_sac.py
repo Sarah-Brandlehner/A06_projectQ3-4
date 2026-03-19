@@ -10,7 +10,7 @@ Usage:
     
     python train_sac.py --timesteps 200000 --num-flights 10 --run-name "test2_03drift_40conflict_ALL_AGENTS" --train-all
 
-    python train_sac.py --timesteps 200000 --num-flights 10 --num-envs 8 --run-name "test_03drift_40conflict_ALL_AGENTS" --train-all
+    python train_sac.py --timesteps 2500000 --num-flights 10 --num-envs 8 --run-name "05drift_08conflict_1.5target_02proximity_ALL_AGENTS" --train-all
 
     python train_sac.py --run-name run_1_baseline
 """
@@ -22,9 +22,11 @@ from datetime import datetime
 print("Is PyTorch using GPU?", torch.cuda.is_available())
 from stable_baselines3 import SAC
 from stable_baselines3.common.callbacks import (
+    BaseCallback,
     EvalCallback,
     CheckpointCallback,
 )
+from collections import deque
 from stable_baselines3.common.monitor import Monitor
 
 # Import Vector Environment wrappers for multiprocessing
@@ -34,6 +36,41 @@ from atcenv.sb3_wrapper import (
     ATCEnvWrapper, ACTION_FREQUENCY, OBS_SIZE,
     INTRUDER_DIST_NORM, INTRUDER_POS_NORM, TARGET_DIST_NORM,
 )
+
+
+# ─────────────────── REWARD BREAKDOWN CALLBACK ───────────────────
+
+class RewardBreakdownCallback(BaseCallback):
+    """
+    Logs per-component reward means to TensorBoard every `log_freq` steps.
+    Reads reward_drift / reward_conflict / reward_target / reward_proximity
+    from the info dicts populated by SharedPolicyVecEnv.
+    """
+
+    def __init__(self, log_freq: int = 500, window: int = 200, verbose: int = 0):
+        super().__init__(verbose)
+        self.log_freq = log_freq
+        self._component_names = ["drift", "conflict", "target", "proximity"]
+        self._buffers = {name: deque(maxlen=window) for name in self._component_names}
+
+    def _on_step(self) -> bool:
+        # Collect reward components from the most recent infos
+        infos = self.locals.get("infos", [])
+        for info in infos:
+            for name in self._component_names:
+                key = f"reward_{name}"
+                if key in info:
+                    self._buffers[name].append(info[key])
+
+        # Log rolling averages periodically
+        if self.n_calls % self.log_freq == 0:
+            for name in self._component_names:
+                buf = self._buffers[name]
+                if len(buf) > 0:
+                    import numpy as _np
+                    mean_val = _np.mean(buf)
+                    self.logger.record(f"reward_components/{name}", mean_val)
+        return True
 
 
 def save_config(args, run_dir):
@@ -79,7 +116,7 @@ def save_config(args, run_dir):
         f.write(f"--- Reward Function ---\n")
         for line in reward_source.split('\n'):
             stripped = line.strip()
-            if any(kw in stripped for kw in ['drift', 'conflict', 'target', 'tot_reward']):
+            if any(kw in stripped for kw in ['drift', 'conflict', 'proximity', 'target', 'tot_reward']):
                 if not stripped.startswith('#'):
                     f.write(f"  {stripped}\n")
         f.write(f"\n")
@@ -155,12 +192,12 @@ def train(args):
     model = SAC(
         "MlpPolicy",
         train_env,
-        learning_rate=1e-3,             # reference uses 1e-3
-        buffer_size=100_000,
-        batch_size=256,
-        tau=0.005,
-        gamma=0.99,
-        learning_starts=1000,
+        learning_rate=3e-4,             # 1e-3
+        buffer_size=500_000,            # 100_000
+        batch_size=256,                 # 256
+        tau=0.005,                      # 0.005
+        gamma=0.99,                     # 0.99
+        learning_starts=5000,           # 1000
         
         train_freq=8,
         gradient_steps=8,
@@ -188,9 +225,11 @@ def train(args):
         name_prefix="sac_atc",
     )
 
+    reward_breakdown_cb = RewardBreakdownCallback(log_freq=500, window=200)
+
     model.learn(
         total_timesteps=args.timesteps,
-        callback=[eval_callback, checkpoint_callback],
+        callback=[eval_callback, checkpoint_callback, reward_breakdown_cb],
         progress_bar=True,
     )
 
