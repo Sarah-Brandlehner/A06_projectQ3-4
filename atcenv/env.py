@@ -103,11 +103,12 @@ class Environment(gym.Env):
 
     def reward(self) -> List:
         # Penalties per sub-step (accumulated across ACTION_FREQUENCY steps in wrapper)
-        # Effective per RL step: drift ≈ -2.5, conflict = -10.0, target = +1.0
+        # Effective per RL step: drift ≈ -2.5, conflict = -10.0, restricted = -5.0, target = +1.0
         drifts     = self.drift_penalties() * -0.3
         conflicts  = self.conflict_penalties() * -4.0
+        restricted = self.restricted_penalties() * -2.5
         target     = self.reachedTarget() * 1.0
-        tot_reward = drifts + conflicts + target
+        tot_reward = drifts + conflicts + restricted + target
         return tot_reward
 
     def reachedTarget(self):
@@ -139,6 +140,13 @@ class Environment(gym.Env):
             if i not in self.done:
                 drift[i] = abs(f.drift)
         return drift
+
+    def restricted_penalties(self):
+        restricted = np.zeros(self.num_flights)
+        for i, f in enumerate(self.flights):
+            if i not in self.done and self.restricted_airspace and self.restricted_airspace.contains_point(f.position.x, f.position.y):
+                restricted[i] += 1
+        return restricted
 
     def observation(self) -> List:
         """

@@ -402,8 +402,8 @@ if __name__ == "__main__":
                         help="The results directory to analyze (e.g., results/test_03drift_40conflict)")
     parser.add_argument("--model-name", type=str, default="best_model/best_model.zip",
                         help="Which model inside the run-dir to evaluate")
-    parser.add_argument("--episodes", type=int, default=30)
-    parser.add_argument("--num-flights", type=int, default=5)
+    parser.add_argument("--episodes", type=int, default=100)
+    parser.add_argument("--num-flights", type=int, default=10)
     args = parser.parse_args()
 
     # Construct the full paths based on the run-dir

@@ -154,7 +154,7 @@ def train(args):
     model = SAC(
         "MlpPolicy",
         train_env,
-        learning_rate=1e-3,             # reference uses 1e-3
+        learning_rate=1e-4,             # reference uses 1e-3
         buffer_size=100_000,
         batch_size=256,
         tau=0.005,
