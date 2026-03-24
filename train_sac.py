@@ -10,7 +10,7 @@ Usage:
     
     python train_sac.py --timesteps 200000 --num-flights 10 --run-name "test2_03drift_40conflict_ALL_AGENTS" --train-all
 
-    python train_sac.py --timesteps 350000 --num-flights 10 --num-envs 8 --run-name "shared_reward_3" --train-all
+    python train_sac.py --timesteps 300000 --num-flights 10 --num-envs 8 --run-name "shared_reward_4" --train-all
 
     python train_sac.py --run-name run_1_baseline
 """
@@ -155,17 +155,17 @@ def train(args):
     model = SAC(
         "MlpPolicy",
         train_env,
-        learning_rate=5e-4,             # reference uses 1e-3, or maybe actually 1e-5
-        buffer_size=500_000,
-        batch_size=256,
+        learning_rate=3e-4,             # reference uses 1e-3, or maybe actually 1e-5
+        buffer_size=1_000_000,          # changed from 500 000
+        batch_size=512,             # changed from 256
         tau=0.005,
-        gamma=0.99,
-        learning_starts=1000,
+        gamma=0.98,             #changed from 0.99
+        learning_starts=3000,
         
-        train_freq=8,
-        gradient_steps=8,
+        train_freq=1,           #changed from 8
+        gradient_steps=1,
         
-        ent_coef="auto",
+        ent_coef="0.1",         # reference uses "auto"
         verbose=1,
         tensorboard_log=f"{run_dir}/tensorboard/",
     )

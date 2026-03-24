@@ -8,7 +8,7 @@ Supports two modes:
 Usage:
     python evaluate.py --model results/best_model/best_model.zip --episodes 10 --num-flights 5
     python evaluate.py --model results/best_model/best_model.zip --episodes 10 --num-flights 5 --deploy-all
-    python evaluate.py --model results/shared_reward/best_model/best_model.zip --episodes 50 --num-flights 10 --deploy-all
+    python evaluate.py --model results/shared_reward_4/best_model/best_model.zip --episodes 50 --num-flights 10 --deploy-all
 """
 import argparse
 import numpy as np

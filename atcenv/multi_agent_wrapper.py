@@ -88,6 +88,18 @@ class SharedPolicyVecEnv(vec_env.VecEnv):
         obs[5*n]     = (obs[5*n] - 230.0) / 30.0
         obs[5*n+1]   = (obs[5*n+1] - 230.0) / 30.0
         obs[5*n+2]   = (obs[5*n+2] - TARGET_DIST_NORM * 0.5) / (TARGET_DIST_NORM * 0.5)
+        vertex_start = 5*n + 5
+        for v in range(4):  # 4 vertices
+            vertex_idx = vertex_start + v * 3
+            if vertex_idx < len(obs):
+                # Distance
+                obs[vertex_idx] = (obs[vertex_idx] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
+            if vertex_idx + 1 < len(obs):
+                # dx
+                obs[vertex_idx + 1] = obs[vertex_idx + 1] / INTRUDER_POS_NORM
+            if vertex_idx + 2 < len(obs):
+                # dy
+                obs[vertex_idx + 2] = obs[vertex_idx + 2] / INTRUDER_POS_NORM
 
         return np.clip(obs, -1.0, 1.0).astype(np.float32)
 

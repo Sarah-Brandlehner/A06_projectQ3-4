@@ -58,7 +58,7 @@ class RestrictedAirspace:
         
         :param max_area: maximum area of the main sector (in nm^2)
         :param min_area: minimum area of the main sector (in nm^2)
-        :param scale_factor: scale factor for the restricted airspace (0-1, default 0.4 for 40% size)
+        :param scale_factor: scale factor for the restricted airspace (0-1, default 0.2 for 20% size)
         :return: random restricted airspace
         """
         # Scale down the radius for a smaller airspace
@@ -71,7 +71,7 @@ class RestrictedAirspace:
             y = r * math.sin(alpha)
             return Point(x, y)
 
-        # Start with a different number of points to ensure different shape
+        
         p = [random_point_in_circle(R) for _ in range(4)]
         polygon = Polygon(p).convex_hull
 
@@ -136,7 +136,7 @@ class Flight:
         return (compass + u.circle) % u.circle
 
     @property
-    def prediction(self, dt: Optional[float] = 20) -> Point:
+    def prediction(self, dt: Optional[float] = 15) -> Point:
         """
         Predicts the future position after dt seconds, maintaining the current speed and track
         :param dt: prediction look-ahead time (in seconds)
@@ -211,36 +211,22 @@ class Flight:
         return heading_line.intersects(restricted_airspace.polygon)
 
     def closest_restricted_vertices(self, restricted_airspace: 'RestrictedAirspace', num_vertices: int = 4):
-        """
-        Get the closest vertices of the restricted airspace polygon to this aircraft
-        
-        :param restricted_airspace: RestrictedAirspace object
-        :param num_vertices: number of closest vertices to return (default 3)
-        :return: list of tuples [(distance, dx, dy), ...] for the num_vertices closest vertices
-        """
         if restricted_airspace is None:
-            # Return dummy values if no restricted airspace
             return [(0.0, 0.0, 0.0)] * num_vertices
         
-        vertices = list(restricted_airspace.polygon.exterior.coords)[:-1]  # Exclude the closing point
-        
-        # Calculate distances and relative positions to all vertices
         vertex_data = []
-        for vertex in vertices:
-            v = Point(vertex)
-            distance = self.position.distance(v)
-            rel_dx = v.x - self.position.x
-            rel_dy = v.y - self.position.y
-            vertex_data.append((distance, rel_dx, rel_dy))
+        for vx, vy in list(restricted_airspace.polygon.exterior.coords)[:-1]:
+            # 1. Get global relative distance
+            dx, dy = vx - self.position.x, vy - self.position.y
+            dist = math.hypot(dx, dy)
+            
+            # 2. Rotate coordinates relative to aircraft heading (track)
+            rel_brg = math.atan2(dx, dy) - self.track
+            vertex_data.append((dist, dist * math.sin(rel_brg), dist * math.cos(rel_brg)))
         
-        # Sort by distance and return the closest num_vertices
+        # Sort by distance and pad if necessary
         vertex_data.sort(key=lambda x: x[0])
-        
-        # Pad with zeros if we don't have enough vertices
-        while len(vertex_data) < num_vertices:
-            vertex_data.append((0.0, 0.0, 0.0))
-        
-        return vertex_data[:num_vertices]
+        return (vertex_data + [(0.0, 0.0, 0.0)] * num_vertices)[:num_vertices]
 
     @classmethod
     def random(cls, airspace: Airspace, min_speed: float, max_speed: float, tol: float = 0.):

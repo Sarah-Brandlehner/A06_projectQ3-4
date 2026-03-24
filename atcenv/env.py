@@ -34,7 +34,7 @@ ENABLE_DELAY = False
 MAXIMUM_DELAY = 3 # s
 PROB_DELAY = 0.1
 
-NUMBER_INTRUDERS_STATE = 2  # start with 2, can try 4 later as single change
+NUMBER_INTRUDERS_STATE = 3  # start with 2, can try 4 later as single change
 MAX_DISTANCE = 250*u.nm
 MAX_BEARING = math.pi
 
@@ -99,15 +99,15 @@ class Environment(gym.Env):
 
     def reward(self) -> List:
         # Calculate individual penalties/rewards per sub-step
-        # Effective per RL step: drift ≈ -1.25, conflict = -35.0, 
-        # restricted = -10.0, heading_into_restricted = -1.25, target = +37.5
+
         # what kinda worked was -0.5 for drift (should be higher tho), -6 for conflict, -4 for restricted, -0.25 for heading, 10 for target
-        drifts                      = self.drift_penalties() * -0.6
-        conflicts                   = self.conflict_penalties() * -8.75
-        restricted                  = self.restricted_airspace_penalties() * -4
-        heading_into_restricted     = self.heading_into_restricted_penalties() * -0.25
-        target                      = self.reachedTarget() * 10
+        drifts                      = self.drift_penalties() * -1
+        conflicts                   = self.conflict_penalties() * -20
+        restricted                  = self.restricted_airspace_penalties() * -10
+        heading_into_restricted     = self.heading_into_restricted_penalties() * -1
+        target                      = self.reachedTarget() * 75
         # -hits targets - -0.6, -7.5, -4, -0.25, +12
+        # kinda works -0.6, -10, -0, -0, +10 - but doesnt really avoid eachother, with -15 conflict we get like 2.5 avconflict, not bad
         
         # Individual rewards
         individual_rewards = drifts + conflicts + restricted + heading_into_restricted + target
@@ -353,10 +353,10 @@ class Environment(gym.Env):
     def step(self, action: List) -> Tuple[List, List, bool, bool, Dict]:
         self.resolution(action)
         self.update_positions()
-        rew = self.reward()
         self.update_done()
         self.update_conflicts()
         self.update_restricted_airspace_intrusions()
+        rew = self.reward()
         obs = self.observation()
         self.i += 1
         self.checkSpeedDif()
@@ -364,7 +364,7 @@ class Environment(gym.Env):
         done_t = (self.i == self.max_episode_len) 
         done_e = (len(self.done) == self.num_flights)
 
-        # self.render() # comment out for training    
+        self.render() # comment out for training    
 
         return obs, rew, done_t, done_e, {}
 
