@@ -19,11 +19,11 @@ Commands:
     python visualize.py evaluate --run-dir results/05drift_08conflict_1.5target_02proximity_ALL_AGENTS --episodes 100 --workers 8
     python visualize.py compare --run-dir results/05drift_06conflict_01target_02proximity_ALL_AGENTS --workers 8
     python visualize.py training --run-dir results/<run> --workers 8
-    python visualize.py trajectory --run-dir results/<run> --workers 8
+    python visualize.py trajectory --run-dir results/rel_velocity_obs --workers 8
 
     python visualize.py evaluate --run-dir results/4_intruders_unlocked_physics --no-random-heading
     python visualize.py evaluate --run-dir results/minimal_reward_ALL_AGENTS --no-random-heading --workers 8
-    python visualize.py evaluate --run-dir results/minimal_reward_ALL_AGENTS --no-random-heading --workers 8 --episodes 100
+    python visualize.py evaluate --run-dir results/rel_velocity_obs --no-random-heading --workers 8 --episodes 100
     
     python visualize.py compare --run-dir results/minimal_reward_ALL_AGENTS --no-random-heading
 
@@ -46,6 +46,7 @@ from atcenv.sb3_wrapper import ATCEnvWrapper, ACTION_FREQUENCY
 INTRUDER_DIST_NORM = 50000.0
 INTRUDER_POS_NORM = 13000.0
 TARGET_DIST_NORM = 200000.0
+SPEED_NORM = 300.0
 
 
 def normalize_obs(raw_obs):
@@ -57,9 +58,11 @@ def normalize_obs(raw_obs):
     obs[2*n:3*n] = obs[2*n:3*n] / INTRUDER_POS_NORM
     obs[3*n:4*n] = obs[3*n:4*n] / INTRUDER_POS_NORM
     obs[4*n:5*n] = obs[4*n:5*n] / np.pi
-    obs[5*n]     = (obs[5*n] - 230.0) / 30.0
-    obs[5*n+1]   = (obs[5*n+1] - 230.0) / 30.0
-    obs[5*n+2]   = (obs[5*n+2] - TARGET_DIST_NORM * 0.5) / (TARGET_DIST_NORM * 0.5)
+    obs[5*n:6*n] = obs[5*n:6*n] / SPEED_NORM
+    obs[6*n:7*n] = obs[6*n:7*n] / SPEED_NORM
+    obs[7*n]     = (obs[7*n] - 230.0) / 30.0
+    obs[7*n+1]   = (obs[7*n+1] - 230.0) / 30.0
+    obs[7*n+2]   = (obs[7*n+2] - TARGET_DIST_NORM * 0.5) / (TARGET_DIST_NORM * 0.5)
     return np.clip(obs, -1.0, 1.0).astype(np.float32)
 
 
@@ -483,7 +486,7 @@ if __name__ == "__main__":
                         help="The results directory to analyze (e.g., results/test_03drift_40conflict)")
     parser.add_argument("--model-name", type=str, default="best_model/best_model.zip",
                         help="Which model inside the run-dir to evaluate")
-    parser.add_argument("--episodes", type=int, default=10000)
+    parser.add_argument("--episodes", type=int, default=100)
     parser.add_argument("--num-flights", type=int, default=10)
     parser.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) // 2),
                         help="Number of parallel worker processes for evaluation")

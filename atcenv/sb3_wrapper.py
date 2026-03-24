@@ -14,8 +14,8 @@ from atcenv.env import Environment, NUMBER_INTRUDERS_STATE
 # Number of sim steps per RL action (reference uses 5-10)
 ACTION_FREQUENCY = 5
 
-# Observation size: 5 * NUMBER_INTRUDERS_STATE + 5
-OBS_SIZE = 5 * NUMBER_INTRUDERS_STATE + 5
+# Observation size: 7 * NUMBER_INTRUDERS_STATE + 5
+OBS_SIZE = 7 * NUMBER_INTRUDERS_STATE + 5
 
 # Normalization constants (matched to reference bluesky-gym ranges)
 INTRUDER_DIST_NORM = 50000.0   # ~27 NM — intruder distances
@@ -63,40 +63,45 @@ class ATCEnvWrapper(gym.Env):
         """
         Normalize raw observation vector to approx [-1, 1] range.
 
-        Raw obs layout (with NUMBER_INTRUDERS_STATE=2):
-          [0:2]   distances to 2 closest intruders (meters)
-          [2:4]   predicted distances to 2 closest intruders (meters)
-          [4:6]   relative dx to 2 closest intruders (meters)
-          [6:8]   relative dy to 2 closest intruders (meters)
-          [8:10]  track differences to 2 closest intruders (radians)
-          [10]    current airspeed (m/s)
-          [11]    optimal airspeed (m/s)
-          [12]    distance to target (meters)
-          [13]    sin(drift angle)
-          [14]    cos(drift angle)
+        Raw obs layout (with N = NUMBER_INTRUDERS_STATE):
+          [0:N]     distances to N closest intruders (meters)
+          [N:2N]    predicted distances to N closest intruders (meters)
+          [2N:3N]   relative dx to N closest intruders (meters)
+          [3N:4N]   relative dy to N closest intruders (meters)
+          [4N:5N]   track differences to N closest intruders (radians)
+          [5N:6N]   relative vx to N closest intruders (m/s)
+          [6N:7N]   relative vy to N closest intruders (m/s)
+          [7N]      current airspeed (m/s)
+          [7N+1]    optimal airspeed (m/s)
+          [7N+2]    distance to target (meters)
+          [7N+3]    sin(drift angle)
+          [7N+4]    cos(drift angle)
         """
         obs = np.array(raw_obs, dtype=np.float32)
 
         n = NUMBER_INTRUDERS_STATE
 
         # Intruder distances: center around typical separation, scale tightly
-        # Reference: (dist - 50000) / 15000
         obs[0:n]     = (obs[0:n] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
         obs[n:2*n]   = (obs[n:2*n] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
 
-        # Relative dx, dy: normalize by 13km (reference uses /13000)
+        # Relative dx, dy: normalize by 13km
         obs[2*n:3*n] = obs[2*n:3*n] / INTRUDER_POS_NORM
         obs[3*n:4*n] = obs[3*n:4*n] / INTRUDER_POS_NORM
 
         # Track differences: already in [-pi, pi], normalize to [-1, 1]
         obs[4*n:5*n] = obs[4*n:5*n] / np.pi
 
+        # Relative velocities: normalize by max speed
+        obs[5*n:6*n] = obs[5*n:6*n] / SPEED_NORM
+        obs[6*n:7*n] = obs[6*n:7*n] / SPEED_NORM
+
         # Airspeeds: center around typical speed (~230 m/s, which is ~450 kt)
-        obs[5*n]     = (obs[5*n] - 230.0) / 30.0
-        obs[5*n+1]   = (obs[5*n+1] - 230.0) / 30.0
+        obs[7*n]     = (obs[7*n] - 230.0) / 30.0
+        obs[7*n+1]   = (obs[7*n+1] - 230.0) / 30.0
 
         # Distance to target: normalize by larger range (targets can be far)
-        obs[5*n+2]   = (obs[5*n+2] - TARGET_DIST_NORM * 0.5) / (TARGET_DIST_NORM * 0.5)
+        obs[7*n+2]   = (obs[7*n+2] - TARGET_DIST_NORM * 0.5) / (TARGET_DIST_NORM * 0.5)
 
         # sin/cos drift: already in [-1, 1]
 

@@ -12,6 +12,7 @@ Usage:
 
     python train_sac.py --timesteps 2000000 --num-flights 10 --num-envs 8 --run-name "minimal_reward_ALL_AGENTS" --train-all
     python train_sac.py --timesteps 3000000 --num-flights 10 --num-envs 8 --train-all --run-name "4_intruders_unlocked_physics"
+    python train_sac.py --timesteps 2000000 --num-flights 10 --num-envs 8 --train-all --run-name "4_intruders_unlocked_physics_finetune" --load "results/4_intruders_unlocked_physics/best_model/best_model.zip"
 
     python train_sac.py --run-name run_1_baseline
 """

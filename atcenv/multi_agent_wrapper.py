@@ -17,7 +17,7 @@ from gymnasium import spaces
 from atcenv.env import Environment, NUMBER_INTRUDERS_STATE
 from atcenv.sb3_wrapper import (
     ACTION_FREQUENCY, OBS_SIZE,
-    INTRUDER_DIST_NORM, INTRUDER_POS_NORM, TARGET_DIST_NORM
+    INTRUDER_DIST_NORM, INTRUDER_POS_NORM, TARGET_DIST_NORM, SPEED_NORM
 )
 
 
@@ -92,9 +92,11 @@ class SharedPolicyVecEnv(vec_env.VecEnv):
         obs[2*n:3*n] = obs[2*n:3*n] / INTRUDER_POS_NORM
         obs[3*n:4*n] = obs[3*n:4*n] / INTRUDER_POS_NORM
         obs[4*n:5*n] = obs[4*n:5*n] / np.pi
-        obs[5*n]     = (obs[5*n] - 230.0) / 30.0
-        obs[5*n+1]   = (obs[5*n+1] - 230.0) / 30.0
-        obs[5*n+2]   = (obs[5*n+2] - TARGET_DIST_NORM * 0.5) / (TARGET_DIST_NORM * 0.5)
+        obs[5*n:6*n] = obs[5*n:6*n] / SPEED_NORM
+        obs[6*n:7*n] = obs[6*n:7*n] / SPEED_NORM
+        obs[7*n]     = (obs[7*n] - 230.0) / 30.0
+        obs[7*n+1]   = (obs[7*n+1] - 230.0) / 30.0
+        obs[7*n+2]   = (obs[7*n+2] - TARGET_DIST_NORM * 0.5) / (TARGET_DIST_NORM * 0.5)
 
         return np.clip(obs, -1.0, 1.0).astype(np.float32)
 

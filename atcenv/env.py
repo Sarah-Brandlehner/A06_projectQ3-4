@@ -99,7 +99,7 @@ class Environment(gym.Env):
     def reward(self) -> List:
         # Tutor's hybrid drift reward + zero target reward
         drifts     = self.drift_penalties() * 0.2                # tutor's weight (+0.2 since formula uses 0.5 - abs(drift))
-        conflicts  = self.conflict_penalties() * -40             # tutor's weight
+        conflicts  = self.conflict_penalties() * -10             # tutor's weight
         alerts     = self.alert_penalties() * 0.0                # DISABLED: was overpowering the drift reward
         target     = self.reachedTarget() * 0.0                  # tutor disables target reward completely
         # proximity  = self.proximity_penalties() * -2.0         # disabled
@@ -110,7 +110,7 @@ class Environment(gym.Env):
         """Return per-flight arrays for each weighted reward component."""
         return {
             "drift":     self.drift_penalties() * 0.2,
-            "conflict":  self.conflict_penalties() * -40,
+            "conflict":  self.conflict_penalties() * -10,
             "alert":     self.alert_penalties() * 0.0,
             "target":    self.reachedTarget() * 0.0,
         }
@@ -212,8 +212,8 @@ class Environment(gym.Env):
     def observation(self) -> List:
         """
         Returns the observation of each agent using fast NumPy vectorization.
-        Layout (5*N + 5): cur_dis, pred_dis, dx, dy, trackdif, airspeed,
-        optimal_airspeed, target_dist, sin(drift), cos(drift)
+        Layout (7*N + 5): cur_dis, pred_dis, dx, dy, trackdif, rel_vx, rel_vy,
+        airspeed, optimal_airspeed, target_dist, sin(drift), cos(drift)
         """
         if self.num_flights == 0:
             return []
@@ -224,6 +224,11 @@ class Environment(gym.Env):
         pred_x = np.array([f.prediction.x for f in self.flights])
         pred_y = np.array([f.prediction.y for f in self.flights])
         tracks = np.array([f.track for f in self.flights])
+        airspeeds = np.array([f.airspeed for f in self.flights])
+
+        # Velocity components per flight
+        vx = airspeeds * np.sin(tracks)
+        vy = airspeeds * np.cos(tracks)
 
         # Distance matrices
         dx = pos_x[np.newaxis, :] - pos_x[:, np.newaxis]
@@ -243,6 +248,10 @@ class Environment(gym.Env):
 
         # Track differences
         trackdif_all = tracks[:, np.newaxis] - tracks[np.newaxis, :]
+
+        # Relative velocity matrices (intruder velocity minus ownship velocity)
+        rel_vx_all = vx[np.newaxis, :] - vx[:, np.newaxis]
+        rel_vy_all = vy[np.newaxis, :] - vy[:, np.newaxis]
 
         # DX / DY components
         dx_all = np.sin(bearing_all) * cur_dis
@@ -278,6 +287,8 @@ class Environment(gym.Env):
             add_padded(dx_all)
             add_padded(dy_all)
             add_padded(trackdif_all)
+            add_padded(rel_vx_all)
+            add_padded(rel_vy_all)
 
             # Ownship state
             obs.append(f.airspeed)
