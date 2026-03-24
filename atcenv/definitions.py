@@ -2,6 +2,7 @@
 Definitions module
 """
 from shapely.geometry import Point, Polygon, LineString
+from shapely.ops import nearest_points
 from dataclasses import dataclass, field
 import atcenv.units as u
 import math
@@ -271,6 +272,27 @@ class Flight:
         vertex_data.sort(key=lambda x: x[0])
         return (vertex_data + [(0.0, 0.0, 0.0)] * num_vertices)[:num_vertices]
 
+    def closest_restricted_point(self, restricted_airspace: 'RestrictedAirspace'):
+        """
+        Get the distance and relative position to the closest point on the restricted airspace boundary
+        
+        :param restricted_airspace: RestrictedAirspace object
+        :return: (distance, relative_dx, relative_dy)
+        """
+        if restricted_airspace is None:
+            return 0.0, 0.0, 0.0
+        
+        point = Point(self.position.x, self.position.y)
+        poly = restricted_airspace.polygon
+        nearest = nearest_points(poly, point)
+        closest_point = nearest[0]  # point on polygon
+        
+        dist = point.distance(closest_point)
+        r_dx = closest_point.x - self.position.x
+        r_dy = closest_point.y - self.position.y
+        
+        return dist, r_dx, r_dy
+
     @classmethod
     def random(cls, airspace: Airspace, min_speed: float, max_speed: float, tol: float = 0., random_init_heading: bool = True):
         """
@@ -336,21 +358,19 @@ class Flight:
         # Check if the heading line intersects with the restricted airspace boundary
         return heading_line.intersects(restricted_airspace.polygon)
 
-    def closest_restricted_vertices(self, restricted_airspace: 'RestrictedAirspace', num_vertices: int = 4):
+    def closest_restricted_point(self, restricted_airspace: 'RestrictedAirspace'):
+        """Finds the single closest point on the restricted boundary and returns (dist, rel_dx, rel_dy)"""
         if restricted_airspace is None:
-            return [(0.0, 0.0, 0.0)] * num_vertices
+            return (0.0, 0.0, 0.0)
         
-        vertex_data = []
-        for vx, vy in list(restricted_airspace.polygon.exterior.coords)[:-1]:
-            # 1. Get global relative distance
-            dx, dy = vx - self.position.x, vy - self.position.y
-            dist = math.hypot(dx, dy)
-            
-            # 2. Rotate coordinates relative to aircraft heading (track)
-            rel_brg = math.atan2(dx, dy) - self.track
-            vertex_data.append((dist, dist * math.sin(rel_brg), dist * math.cos(rel_brg)))
+        # Find the point on the exterior linear ring closest to aircraft position
+        exterior = restricted_airspace.polygon.exterior
+        closest_p = exterior.interpolate(exterior.project(self.position))
         
-        # Sort by distance and pad if necessary
-        vertex_data.sort(key=lambda x: x[0])
-        return (vertex_data + [(0.0, 0.0, 0.0)] * num_vertices)[:num_vertices]
+        dx, dy = closest_p.x - self.position.x, closest_p.y - self.position.y
+        dist = math.hypot(dx, dy)
+        
+        # Rotate to heading-relative coordinates
+        rel_brg = math.atan2(dx, dy) - self.track
+        return (dist, dist * math.sin(rel_brg), dist * math.cos(rel_brg))
 

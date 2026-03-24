@@ -104,8 +104,8 @@ class Environment(gym.Env):
         # Tutor's hybrid drift reward + zero target reward
         drifts     = self.drift_penalties() * 0.2                # tutor's weight (+0.2 since formula uses 0.5 - abs(drift))
         conflicts  = self.conflict_penalties() * -40             # tutor's weight
-        restricted                  = self.restricted_airspace_penalties() * -10
-        heading_into_restricted     = self.heading_into_restricted_penalties() * -1
+        restricted                  = self.restricted_airspace_penalties() * 0
+        heading_into_restricted     = self.heading_into_restricted_penalties() * 0
         alerts     = self.alert_penalties() * 0.0                # DISABLED: was overpowering the drift reward
         target     = self.reachedTarget() * 0.0                  # tutor disables target reward completely
         
@@ -263,7 +263,7 @@ class Environment(gym.Env):
         Returns the observation of each agent using fast NumPy vectorization.
         Layout (5*N + 19): cur_dis, pred_dis, dx, dy, trackdif, airspeed,
         optimal_airspeed, target_dist, sin(drift), cos(drift), in_restricted, heading_into_restricted,
-        + 4 closest restricted vertices (distance, dx, dy for each)
+        + 1 closest restricted point (distance, dx, dy for each)
         """
         if self.num_flights == 0:
             return []
@@ -340,12 +340,9 @@ class Environment(gym.Env):
             obs.append(1.0 if f.in_restricted_airspace(self.restricted_airspace) else 0.0)
             obs.append(1.0 if f.heading_into_restricted_airspace(self.restricted_airspace) else 0.0)
             
-            # Closest 4 vertices of restricted airspace (distance, dx, dy for each)
-            closest_vertices = f.closest_restricted_vertices(self.restricted_airspace, num_vertices=4)
-            for distance, rel_dx, rel_dy in closest_vertices:
-                obs.append(distance)
-                obs.append(rel_dx)
-                obs.append(rel_dy)
+            # Closest 1 point of restricted airspace (distance, dx, dy)
+            dist, r_dx, r_dy = f.closest_restricted_point(self.restricted_airspace)
+            obs.extend([dist, r_dx, r_dy])
 
             observations_all.append(obs)
 
@@ -438,7 +435,7 @@ class Environment(gym.Env):
         done_t = (self.i == self.max_episode_len) 
         done_e = (len(self.done) == self.num_flights)
 
-        self.render() # comment out for training    
+        #self.render() # comment out for training    
 
         return obs, rew, done_t, done_e, {}
 
