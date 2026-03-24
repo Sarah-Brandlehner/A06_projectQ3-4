@@ -1,11 +1,11 @@
 Training Configuration
 ==================================================
-Date: 2026-03-17 14:06:36
+Date: 2026-03-17 15:43:59
 Run name: test_03drift_40conflict_ALL_AGENTS
 
 --- Training Parameters ---
 Mode:            ALL AGENTS (Deploy-all)
-Timesteps:       400000
+Timesteps:       2000000
 Num flights:     10
 Num envs:        8
 Algorithm:       SAC (MlpPolicy)
@@ -25,14 +25,14 @@ Intruder position scale:  13000.0 m
 Target distance scale:    200000.0 m
 Speed center:             230.0 m/s
 Speed scale:              30.0 m/s
-Observation size:         15
+Observation size:         17
 Action frequency:         5
 
 --- Reward Function ---
-  drifts     = self.drift_penalties() * -0.3
-  conflicts  = self.conflict_penalties() * -4.0
-  target     = self.reachedTarget() * 1.0
-  tot_reward = drifts + conflicts + target
+  drifts          = self.drift_penalties() * -0.3
+  conflicts       = self.conflict_penalties() * -4.0
+  target          = self.reachedTarget() * 1.0
+  tot_reward      = drifts + conflicts + restricted + target
   return tot_reward
 
 --- Heading / Speed Limits ---

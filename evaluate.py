@@ -8,6 +8,7 @@ Supports two modes:
 Usage:
     python evaluate.py --model results/best_model/best_model.zip --episodes 10 --num-flights 5
     python evaluate.py --model results/best_model/best_model.zip --episodes 10 --num-flights 5 --deploy-all
+    python evaluate.py --model results/shared_reward_4/best_model/best_model.zip --episodes 50 --num-flights 10 --deploy-all
 """
 import argparse
 import numpy as np
@@ -43,6 +44,24 @@ def normalize_obs(raw_obs):
     # Distance to target
     obs[5*n+2]   = (obs[5*n+2] - TARGET_DIST_NORM * 0.5) / (TARGET_DIST_NORM * 0.5)
 
+    # Restricted airspace flags (already in [0, 1] range)
+    # obs[5*n+3] and obs[5*n+4] - no normalization needed
+    
+    # Closest 4 vertices of restricted airspace (distance, dx, dy for each)
+    # Normalize distances and positions similar to intruder data
+    vertex_start = 5*n + 5
+    for v in range(4):  # 4 vertices
+        vertex_idx = vertex_start + v * 3
+        if vertex_idx < len(obs):
+            # Distance
+            obs[vertex_idx] = (obs[vertex_idx] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
+        if vertex_idx + 1 < len(obs):
+            # dx
+            obs[vertex_idx + 1] = obs[vertex_idx + 1] / INTRUDER_POS_NORM
+        if vertex_idx + 2 < len(obs):
+            # dy
+            obs[vertex_idx + 2] = obs[vertex_idx + 2] / INTRUDER_POS_NORM
+
     return np.clip(obs, -1.0, 1.0).astype(np.float32)
 
 
@@ -52,27 +71,32 @@ def evaluate_single_actor(model_path: str, n_episodes: int = 10, num_flights: in
     env = ATCEnvWrapper(num_flights=num_flights, training=False)
 
     total_conflicts = 0
+    total_restricted_intrusions = 0
     total_targets_reached = 0
 
     for ep in range(n_episodes):
         obs, _ = env.reset()
         done = False
         ep_conflicts = 0
+        ep_restricted_intrusions = 0
         while not done:
             action, _ = model.predict(obs, deterministic=True)
             obs, reward, terminated, truncated, info = env.step(action)
             ep_conflicts += len(env._env.conflicts)
+            ep_restricted_intrusions += len(env._env.restricted_airspace_intrusions)
             done = terminated or truncated
 
         targets = len(env._env.done)
         total_conflicts += ep_conflicts
+        total_restricted_intrusions += ep_restricted_intrusions
         total_targets_reached += targets
-        print(f"  Episode {ep+1}: conflicts={ep_conflicts}, targets_reached={targets}/{num_flights}")
+        print(f"  Episode {ep+1}: conflicts={ep_conflicts}, restricted_intrusions={ep_restricted_intrusions}, targets_reached={targets}/{num_flights}")
 
     env.close()
 
     print(f"\n=== Single-Actor Results ({n_episodes} episodes) ===")
     print(f"Avg conflicts/episode:  {total_conflicts / n_episodes:.1f}")
+    print(f"Avg restricted intrusions/episode: {total_restricted_intrusions / n_episodes:.1f}")
     print(f"Avg targets reached:    {total_targets_reached / n_episodes:.1f} / {num_flights}")
 
 
@@ -85,12 +109,14 @@ def evaluate_all_agents(model_path: str, n_episodes: int = 10, num_flights: int 
     env = Environment(num_flights=num_flights)
 
     total_conflicts = 0
+    total_restricted_intrusions = 0
     total_targets_reached = 0
 
     for ep in range(n_episodes):
         raw_obs_list = env.reset(num_flights)
         done = False
         ep_conflicts = 0
+        ep_restricted_intrusions = 0
 
         while not done:
             n_active = len(env.flights) - len(env.done)
@@ -115,18 +141,21 @@ def evaluate_all_agents(model_path: str, n_episodes: int = 10, num_flights: int 
                 actions = np.zeros((len(env.flights) - len(env.done), 2), dtype=np.float32)
 
             ep_conflicts += len(env.conflicts)
+            ep_restricted_intrusions += len(env.restricted_airspace_intrusions)
             if done_t or done_e:
                 done = True
 
         targets = len(env.done)
         total_conflicts += ep_conflicts
+        total_restricted_intrusions += ep_restricted_intrusions
         total_targets_reached += targets
-        print(f"  Episode {ep+1}: conflicts={ep_conflicts}, targets_reached={targets}/{num_flights}")
+        print(f"  Episode {ep+1}: conflicts={ep_conflicts}, restricted_intrusions={ep_restricted_intrusions}, targets_reached={targets}/{num_flights}")
 
     env.close()
 
     print(f"\n=== All-Agent Results ({n_episodes} episodes) ===")
     print(f"Avg conflicts/episode:  {total_conflicts / n_episodes:.1f}")
+    print(f"Avg restricted intrusions/episode: {total_restricted_intrusions / n_episodes:.1f}")
     print(f"Avg targets reached:    {total_targets_reached / n_episodes:.1f} / {num_flights}")
 
 

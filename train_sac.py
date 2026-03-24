@@ -10,6 +10,7 @@ Usage:
     
     python train_sac.py --timesteps 200000 --num-flights 10 --run-name "test2_03drift_40conflict_ALL_AGENTS" --train-all
 
+    python train_sac.py --timesteps 300000 --num-flights 10 --num-envs 8 --run-name "shared_reward_4" --train-all
     python train_sac.py --timesteps 2000000 --num-flights 10 --num-envs 8 --run-name "minimal_reward_ALL_AGENTS" --train-all
     python train_sac.py --timesteps 3000000 --num-flights 10 --num-envs 8 --train-all --run-name "4_intruders_unlocked_physics"
 

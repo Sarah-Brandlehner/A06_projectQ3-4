@@ -12,6 +12,10 @@ Commands:
  
     To run the visualization in a specific run directory, use the --run-dir argument:
 
+    python visualize.py compare --run-dir results/test_03drift_40conflict
+    python visualize.py evaluate --run-dir results/shared_reward
+    python visualize.py training --run-dir results/expanded_obs_matrix_4
+    python visualize.py trajectory --run-dir results/shared_reward
     python visualize.py compare --run-dir results/alert_shared_reward_ALL_AGENTS
     python visualize.py evaluate --run-dir results/minimal_reward_ALL_AGENTS
     python visualize.py training --run-dir results/test_03drift_40conflict
@@ -60,6 +64,25 @@ def normalize_obs(raw_obs):
     obs[5*n]     = (obs[5*n] - 230.0) / 30.0
     obs[5*n+1]   = (obs[5*n+1] - 230.0) / 30.0
     obs[5*n+2]   = (obs[5*n+2] - TARGET_DIST_NORM * 0.5) / (TARGET_DIST_NORM * 0.5)
+    
+    # Restricted airspace flags (already in [0, 1] range)
+    # obs[5*n+3] and obs[5*n+4] - no normalization needed
+    
+    # Closest 4 vertices of restricted airspace (distance, dx, dy for each)
+    # Normalize distances and positions similar to intruder data
+    vertex_start = 5*n + 5
+    for v in range(4):  # 4 vertices
+        vertex_idx = vertex_start + v * 3
+        if vertex_idx < len(obs):
+            # Distance
+            obs[vertex_idx] = (obs[vertex_idx] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
+        if vertex_idx + 1 < len(obs):
+            # dx
+            obs[vertex_idx + 1] = obs[vertex_idx + 1] / INTRUDER_POS_NORM
+        if vertex_idx + 2 < len(obs):
+            # dy
+            obs[vertex_idx + 2] = obs[vertex_idx + 2] / INTRUDER_POS_NORM
+    
     return np.clip(obs, -1.0, 1.0).astype(np.float32)
 
 
@@ -117,7 +140,7 @@ def record_episode(model, num_flights=5, deploy_all=True, random_heading=True):
     raw_obs_list = env.reset(num_flights)
 
     # Record initial positions and targets
-    trajectories = {i: {"x": [], "y": [], "conflicts": []} for i in range(num_flights)}
+    trajectories = {i: {"x": [], "y": [], "conflicts": [], "restricted_intrusions": []} for i in range(num_flights)}
     targets = {}
     for i, f in enumerate(env.flights):
         targets[i] = (f.target.x, f.target.y)
@@ -125,6 +148,7 @@ def record_episode(model, num_flights=5, deploy_all=True, random_heading=True):
     done = False
     step = 0
     total_conflicts = 0
+    total_restricted_intrusions = 0
 
     while not done:
         # Get actions
@@ -143,6 +167,7 @@ def record_episode(model, num_flights=5, deploy_all=True, random_heading=True):
             trajectories[i]["x"].append(f.position.x)
             trajectories[i]["y"].append(f.position.y)
             trajectories[i]["conflicts"].append(i in env.conflicts)
+            trajectories[i]["restricted_intrusions"].append(i in env.restricted_airspace_intrusions)
 
         # Step with ACTION_FREQUENCY
         for _ in range(ACTION_FREQUENCY):
@@ -157,6 +182,7 @@ def record_episode(model, num_flights=5, deploy_all=True, random_heading=True):
                 break
 
         total_conflicts += len(env.conflicts)
+        total_restricted_intrusions += len(env.restricted_airspace_intrusions)
         step += 1
 
     # Record final positions
@@ -164,21 +190,23 @@ def record_episode(model, num_flights=5, deploy_all=True, random_heading=True):
         trajectories[i]["x"].append(f.position.x)
         trajectories[i]["y"].append(f.position.y)
         trajectories[i]["conflicts"].append(i in env.conflicts)
+        trajectories[i]["restricted_intrusions"].append(i in env.restricted_airspace_intrusions)
 
     env.close()
 
-    # Get airspace polygon for plotting
+    # Get airspace polygons for plotting
     airspace_coords = list(env.airspace.polygon.exterior.coords)
+    restricted_airspace_coords = list(env.restricted_airspace.polygon.exterior.coords) if env.restricted_airspace else []
 
-    return trajectories, targets, airspace_coords, total_conflicts
+    return trajectories, targets, airspace_coords, restricted_airspace_coords, total_conflicts, total_restricted_intrusions
 
 
 def plot_trajectories(model_path, num_flights=5, deploy_all=True,
                       save_path="results/plots/trajectories.png", random_heading=True):
     """Plot aircraft trajectories for one episode."""
     model = SAC.load(model_path)
-    trajectories, targets, airspace, total_conflicts = record_episode(
-        model, num_flights, deploy_all, random_heading=random_heading
+    trajectories, targets, airspace, restricted_airspace, total_conflicts, total_restricted_intrusions = record_episode(
+        model, num_flights, deploy_all
     )
 
     fig, ax = plt.subplots(1, 1, figsize=(10, 10))
@@ -190,16 +218,30 @@ def plot_trajectories(model_path, num_flights=5, deploy_all=True,
     airspace_y = [p[1]/1000 for p in airspace]
     ax.plot(airspace_x, airspace_y, "k--", alpha=0.3, linewidth=1, label="Airspace")
 
+    # Draw restricted airspace boundary
+    if restricted_airspace:
+        restricted_x = [p[0]/1000 for p in restricted_airspace]
+        restricted_y = [p[1]/1000 for p in restricted_airspace]
+        ax.plot(restricted_x, restricted_y, "g-", alpha=0.6, linewidth=2, label="Restricted Airspace")
+
     for i in range(num_flights):
         traj = trajectories[i]
         x = np.array(traj["x"]) / 1000  # Convert to km
         y = np.array(traj["y"]) / 1000
         conflicts = traj["conflicts"]
+        restricted_intrusions = traj["restricted_intrusions"]
 
-        # Plot trajectory with color indicating conflicts
+        # Plot trajectory with color indicating conflicts and restricted airspace intrusions
         for j in range(len(x) - 1):
-            color = "red" if conflicts[j] else colors[i]
-            linewidth = 3 if conflicts[j] else 1.5
+            if conflicts[j]:
+                color = "red"
+                linewidth = 3
+            elif restricted_intrusions[j]:
+                color = "yellow"
+                linewidth = 2
+            else:
+                color = colors[i]
+                linewidth = 1.5
             ax.plot([x[j], x[j+1]], [y[j], y[j+1]], color=color, linewidth=linewidth)
 
         # Start position (circle)
@@ -216,11 +258,12 @@ def plot_trajectories(model_path, num_flights=5, deploy_all=True,
     start_patch = mpatches.Patch(color="gray", label="● Start")
     target_patch = mpatches.Patch(color="gray", label="★ Target")
     conflict_patch = mpatches.Patch(color="red", label="— Conflict")
-    ax.legend(handles=[start_patch, target_patch, conflict_patch], loc="upper right")
+    restricted_patch = mpatches.Patch(color="yellow", label="— Restricted Intrusion")
+    ax.legend(handles=[start_patch, target_patch, conflict_patch, restricted_patch], loc="upper right")
 
     mode = "All agents" if deploy_all else "Single actor"
     ax.set_title(f"Aircraft Trajectories ({mode}, {num_flights} flights, "
-                 f"{total_conflicts} conflicts)", fontsize=13)
+                 f"{total_conflicts} conflicts, {total_restricted_intrusions} restricted intrusions)", fontsize=13)
     ax.set_xlabel("X (km)")
     ax.set_ylabel("Y (km)")
     ax.set_aspect("equal")
@@ -483,7 +526,7 @@ if __name__ == "__main__":
                         help="The results directory to analyze (e.g., results/test_03drift_40conflict)")
     parser.add_argument("--model-name", type=str, default="best_model/best_model.zip",
                         help="Which model inside the run-dir to evaluate")
-    parser.add_argument("--episodes", type=int, default=10000)
+    parser.add_argument("--episodes", type=int, default=100)
     parser.add_argument("--num-flights", type=int, default=10)
     parser.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) // 2),
                         help="Number of parallel worker processes for evaluation")
