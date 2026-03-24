@@ -97,6 +97,12 @@ class SharedPolicyVecEnv(vec_env.VecEnv):
         obs[7*n]     = (obs[7*n] - 230.0) / 30.0
         obs[7*n+1]   = (obs[7*n+1] - 230.0) / 30.0
         obs[7*n+2]   = (obs[7*n+2] - TARGET_DIST_NORM * 0.5) / (TARGET_DIST_NORM * 0.5)
+        
+        point_start = 7*n + 7
+        if point_start < len(obs):
+            obs[point_start] = (obs[point_start] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
+            obs[point_start+1] = obs[point_start+1] / INTRUDER_POS_NORM
+            obs[point_start+2] = obs[point_start+2] / INTRUDER_POS_NORM
 
         return np.clip(obs, -1.0, 1.0).astype(np.float32)
 
