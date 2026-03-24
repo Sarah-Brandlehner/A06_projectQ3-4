@@ -70,19 +70,19 @@ def normalize_obs(raw_obs):
     
     # Closest 4 vertices of restricted airspace (distance, dx, dy for each)
     # Normalize distances and positions similar to intruder data
-    vertex_start = 5*n + 5
-    for v in range(4):  # 4 vertices
-        vertex_idx = vertex_start + v * 3
-        if vertex_idx < len(obs):
-            # Distance
-            obs[vertex_idx] = (obs[vertex_idx] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
-        if vertex_idx + 1 < len(obs):
-            # dx
-            obs[vertex_idx + 1] = obs[vertex_idx + 1] / INTRUDER_POS_NORM
-        if vertex_idx + 2 < len(obs):
-            # dy
-            obs[vertex_idx + 2] = obs[vertex_idx + 2] / INTRUDER_POS_NORM
-    
+    # restricted flags are at 5n+5 and 5n+6
+    # The closest point (dist, dx, dy) starts at 5n+7
+    point_start = 5 * n + 7
+    if point_start < len(obs):
+        # Normalize Distance
+        obs[point_start] = (obs[point_start] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
+        # Normalize dx
+        if point_start + 1 < len(obs):
+            obs[point_start + 1] = obs[point_start + 1] / INTRUDER_POS_NORM
+        # Normalize dy
+        if point_start + 2 < len(obs):
+            obs[point_start + 2] = obs[point_start + 2] / INTRUDER_POS_NORM
+
     return np.clip(obs, -1.0, 1.0).astype(np.float32)
 
 

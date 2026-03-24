@@ -341,8 +341,10 @@ class Environment(gym.Env):
             obs.append(1.0 if f.heading_into_restricted_airspace(self.restricted_airspace) else 0.0)
             
             # Closest 1 point of restricted airspace (distance, dx, dy)
-            dist, r_dx, r_dy = f.closest_restricted_point(self.restricted_airspace)
-            obs.extend([dist, r_dx, r_dy])
+            dist, rel_dx, rel_dy = f.closest_restricted_point(self.restricted_airspace)
+            obs.append(dist)
+            obs.append(rel_dx)
+            obs.append(rel_dy)
 
             observations_all.append(obs)
 
