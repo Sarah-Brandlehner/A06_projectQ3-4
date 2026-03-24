@@ -104,8 +104,8 @@ class Environment(gym.Env):
         # Tutor's hybrid drift reward + zero target reward
         drifts     = self.drift_penalties() * 0.2                # tutor's weight (+0.2 since formula uses 0.5 - abs(drift))
         conflicts  = self.conflict_penalties() * -10             # tutor's weight
-        restricted                  = self.restricted_airspace_penalties() * -10
-        heading_into_restricted     = self.heading_into_restricted_penalties() * -0.05
+        restricted                  = self.restricted_airspace_penalties() * 0.0 #-10
+        heading_into_restricted     = self.heading_into_restricted_penalties() * 0.0 #-0.05
         alerts     = self.alert_penalties() * 0.0                # DISABLED: was overpowering the drift reward
         target     = self.reachedTarget() * 0.0                  # tutor disables target reward completely
         
@@ -123,8 +123,8 @@ class Environment(gym.Env):
             "conflict":  self.conflict_penalties() * -10,
             "alert":     self.alert_penalties() * 0.0,
             "target":    self.reachedTarget() * 0.0,
-            "restricted": self.restricted_airspace_penalties() * -10,
-            "heading_into_restricted": self.heading_into_restricted_penalties() * -0.05,
+            "restricted": self.restricted_airspace_penalties() * 0.0, #-10
+            "heading_into_restricted": self.heading_into_restricted_penalties() * 0.0, #-0.05
         }
 
     def reachedTarget(self):
@@ -441,6 +441,7 @@ class Environment(gym.Env):
         self.resolution(action)
         self.update_positions()
         self.update_conflicts()
+        self.update_restricted_airspace_intrusions()
         rew = self.reward()          # reward BEFORE update_done so reachedTarget() works
         self.update_done()           # now mark agents as done
         obs = self.observation()     # obs reflects new done status
