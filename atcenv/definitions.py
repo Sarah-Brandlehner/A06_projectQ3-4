@@ -52,6 +52,7 @@ class Flight:
     position: Point
     target: Point
     optimal_airspeed: float
+    random_init_heading: bool = True
 
     airspeed: float = field(init=False)
     track: float = field(init=False)
@@ -66,7 +67,10 @@ class Flight:
         Initialises the track and the airspeed
         :return:
         """
-        self.track = self.bearing
+        if self.random_init_heading:
+            self.track = random.uniform(0, 2 * math.pi)
+        else:
+            self.track = self.bearing
         self.airspeed = self.optimal_airspeed
         
         # Initialise previous speeds
@@ -138,7 +142,7 @@ class Flight:
             return drift
 
     @classmethod
-    def random(cls, airspace: Airspace, min_speed: float, max_speed: float, tol: float = 0.):
+    def random(cls, airspace: Airspace, min_speed: float, max_speed: float, tol: float = 0., random_init_heading: bool = True):
         """
         Creates a random flight
 
@@ -169,6 +173,6 @@ class Flight:
         # random speed
         airspeed = random.uniform(min_speed, max_speed)
 
-        return cls(position, target, airspeed)
+        return cls(position, target, airspeed, random_init_heading=random_init_heading)
 
 
