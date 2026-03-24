@@ -104,8 +104,8 @@ class Environment(gym.Env):
         # Tutor's hybrid drift reward + zero target reward
         drifts     = self.drift_penalties() * 0.2                # tutor's weight (+0.2 since formula uses 0.5 - abs(drift))
         conflicts  = self.conflict_penalties() * -40             # tutor's weight
-        restricted                  = self.restricted_airspace_penalties() * 0
-        heading_into_restricted     = self.heading_into_restricted_penalties() * 0
+        restricted                  = self.restricted_airspace_penalties() * -10
+        heading_into_restricted     = self.heading_into_restricted_penalties() * -0.05
         alerts     = self.alert_penalties() * 0.0                # DISABLED: was overpowering the drift reward
         target     = self.reachedTarget() * 0.0                  # tutor disables target reward completely
         
@@ -113,7 +113,7 @@ class Environment(gym.Env):
         # what kinda worked was -0.5 for drift (should be higher tho), -6 for conflict, -4 for restricted, -0.25 for heading, 10 for target
         # -hits targets - -0.6, -7.5, -4, -0.25, +12
         # kinda works -0.6, -10, -0, -0, +10 - but doesnt really avoid eachother, with -15 conflict we get like 2.5 avconflict, not bad
-        tot_reward = drifts + conflicts + alerts + target
+        tot_reward = drifts + conflicts + alerts + target + restricted + heading_into_restricted
         return tot_reward
 
     def reward_components(self):
