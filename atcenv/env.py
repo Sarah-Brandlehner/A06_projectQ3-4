@@ -74,6 +74,7 @@ class Environment(gym.Env):
         self.flights = [] # list of flights
         self.conflicts = set()  # set of flights that are in conflict
         self.done = set()  # set of flights that reached the target
+        self.restricted_airspace_intrusions = set()  # set of flights in restricted airspace
         self.i = None
         
         # Get the random wind direction and intensity for this episode
@@ -102,6 +103,8 @@ class Environment(gym.Env):
         conflicts  = self.conflict_penalties() * -40             # tutor's weight
         alerts     = self.alert_penalties() * 0.0                # DISABLED: was overpowering the drift reward
         target     = self.reachedTarget() * 0.0                  # tutor disables target reward completely
+        restricted                  = self.restricted_airspace_penalties() * -10
+        heading_into_restricted     = self.heading_into_restricted_penalties() * -1
         # proximity  = self.proximity_penalties() * -2.0         # disabled
         tot_reward = drifts + conflicts + alerts + target
         return tot_reward
@@ -206,6 +209,25 @@ class Environment(gym.Env):
                     penalty = max(0, (threshold - dist) / (threshold - self.min_distance))
                     penalties[i] += penalty
                     penalties[j] += penalty
+        return penalties
+    def restricted_airspace_penalties(self):
+        """
+        Check if each flight is in restricted airspace and return penalty flag
+        """
+        penalties = np.zeros(self.num_flights)
+        for i, f in enumerate(self.flights):
+            if i not in self.done and self.restricted_airspace and f.in_restricted_airspace(self.restricted_airspace):
+                penalties[i] = 1
+        return penalties
+    
+    def heading_into_restricted_penalties(self):
+        """
+        Check if each flight's heading vector points into restricted airspace and return penalty flag
+        """
+        penalties = np.zeros(self.num_flights)
+        for i, f in enumerate(self.flights):
+            if i not in self.done and self.restricted_airspace and f.heading_into_restricted_airspace(self.restricted_airspace):
+                penalties[i] = 1
         return penalties
 
 
