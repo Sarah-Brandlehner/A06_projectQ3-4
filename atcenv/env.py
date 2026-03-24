@@ -17,6 +17,7 @@ GREEN = [0, 255, 0]
 BLUE = [0, 0, 255]
 BLACK = [0, 0, 0]
 RED = [255, 0, 0]
+YELLOW = [255, 255, 0]
 
 # Position uncertainty vars
 ENABLE_POSITION_UNCERTAINTY = False
@@ -33,7 +34,7 @@ ENABLE_DELAY = False
 MAXIMUM_DELAY = 3 # s
 PROB_DELAY = 0.1
 
-NUMBER_INTRUDERS_STATE = 2  # start with 2, can try 4 later as single change
+NUMBER_INTRUDERS_STATE = 4  # changed from 2 to prevent blind spot collisions
 MAX_DISTANCE = 250*u.nm
 MAX_BEARING = math.pi
 
@@ -50,6 +51,7 @@ class Environment(gym.Env):
                  max_episode_len: Optional[int] = 300,
                  min_distance: Optional[float] = 5.,
                  distance_init_buffer: Optional[float] = 5.,
+                 random_init_heading: bool = True,
                  **kwargs):
         """
         Initialises the environment
@@ -62,6 +64,7 @@ class Environment(gym.Env):
         self.min_distance = min_distance * u.nm
         self.max_episode_len = max_episode_len
         self.distance_init_buffer = distance_init_buffer
+        self.random_init_heading = random_init_heading
         self.dt = dt
 
         # tolerance to consider that the target has been reached (in meters)
@@ -69,9 +72,12 @@ class Environment(gym.Env):
 
         self.viewer = None
         self.airspace = None
+        self.restricted_airspace = None
         self.flights = [] # list of flights
         self.conflicts = set()  # set of flights that are in conflict
+        self.restricted_airspace_intrusions = set()  # set of flights in restricted airspace
         self.done = set()  # set of flights that reached the target
+        self.restricted_airspace_intrusions = set()  # set of flights in restricted airspace
         self.i = None
         
         # Get the random wind direction and intensity for this episode
@@ -88,29 +94,35 @@ class Environment(gym.Env):
                 # Heading change: ±22.5° per action (matches reference)
                 new_track = f.track + action[it2][0] * math.radians(22.5)
                 f.track = (new_track + u.circle) % u.circle
-                # Speed change: ±6.67 kts per action (matches reference D_VELOCITY)
-                f.airspeed += action[it2][1] * (self.max_speed - self.min_speed) / 10
+                # Speed change: ±33 kts per action (matches tutor's MAX/3)
+                f.airspeed += action[it2][1] * (self.max_speed - self.min_speed) / 3
                 f.airspeed = max(min(f.airspeed, self.max_speed), self.min_speed)
                 it2 += 1
         return None
 
     def reward(self) -> List:
-        # Penalties per sub-step (accumulated across ACTION_FREQUENCY steps in wrapper)
-        # Effective per RL step: drift ≈ -2.5, conflict = -10.0, target = +1.0
-        drifts     = self.drift_penalties() * -0.5
-        conflicts  = self.conflict_penalties() * -8
-        target     = self.reachedTarget() * 1.5
-        # proximity  = self.proximity_penalties() * -2.0 # added proximity penalty
-        tot_reward = drifts + conflicts + target #+ proximity
+        # Tutor's hybrid drift reward + zero target reward
+        drifts     = self.drift_penalties() * 0.2                # tutor's weight (+0.2 since formula uses 0.5 - abs(drift))
+        conflicts  = self.conflict_penalties() * -40             # tutor's weight
+        restricted                  = self.restricted_airspace_penalties() * -10
+        heading_into_restricted     = self.heading_into_restricted_penalties() * -1
+        alerts     = self.alert_penalties() * 0.0                # DISABLED: was overpowering the drift reward
+        target     = self.reachedTarget() * 0.0                  # tutor disables target reward completely
+        
+        # proximity  = self.proximity_penalties() * -2.0         # disabled
+        # what kinda worked was -0.5 for drift (should be higher tho), -6 for conflict, -4 for restricted, -0.25 for heading, 10 for target
+        # -hits targets - -0.6, -7.5, -4, -0.25, +12
+        # kinda works -0.6, -10, -0, -0, +10 - but doesnt really avoid eachother, with -15 conflict we get like 2.5 avconflict, not bad
+        tot_reward = drifts + conflicts + alerts + target
         return tot_reward
 
     def reward_components(self):
         """Return per-flight arrays for each weighted reward component."""
         return {
-            "drift":     self.drift_penalties() * -0.5,
-            "conflict":  self.conflict_penalties() * -8,
-            "target":    self.reachedTarget() * 1.5,
-            "proximity": self.proximity_penalties() * -2.0,
+            "drift":     self.drift_penalties() * 0.2,
+            "conflict":  self.conflict_penalties() * -40,
+            "alert":     self.alert_penalties() * 0.0,
+            "target":    self.reachedTarget() * 0.0,
         }
 
     def reachedTarget(self):
@@ -140,8 +152,67 @@ class Environment(gym.Env):
         drift = np.zeros(self.num_flights)
         for i, f in enumerate(self.flights):
             if i not in self.done:
-                drift[i] = abs(f.drift)
+                drift[i] = 0.5 - abs(f.drift)   # tutor's formula: rewards on-track, penalizes off-track
         return drift
+    
+    def restricted_airspace_penalties(self):
+        """
+        Check if each flight is in restricted airspace and return penalty flag
+        """
+        penalties = np.zeros(self.num_flights)
+        for i, f in enumerate(self.flights):
+            if i not in self.done and self.restricted_airspace and f.in_restricted_airspace(self.restricted_airspace):
+                penalties[i] = 1
+        return penalties
+    
+    def heading_into_restricted_penalties(self):
+        """
+        Check if each flight's heading vector points into restricted airspace and return penalty flag
+        """
+        penalties = np.zeros(self.num_flights)
+        for i, f in enumerate(self.flights):
+            if i not in self.done and self.restricted_airspace and f.heading_into_restricted_airspace(self.restricted_airspace):
+                penalties[i] = 1
+        return penalties
+
+    def alert_penalties(self):
+        """Penalty for predicted conflicts within 2 minutes (paper Eq. 22, wa=5).
+        Uses Closest Point of Approach (CPA) between each active pair."""
+        penalties = np.zeros(self.num_flights)
+        active = [i for i in range(self.num_flights) if i not in self.done]
+        if len(active) < 2:
+            return penalties
+
+        for idx_a in range(len(active)):
+            i = active[idx_a]
+            fi = self.flights[i]
+            dxi, dyi = fi.components
+            for idx_b in range(idx_a + 1, len(active)):
+                j = active[idx_b]
+                fj = self.flights[j]
+                dxj, dyj = fj.components
+
+                # Relative position and velocity
+                rx = fi.position.x - fj.position.x
+                ry = fi.position.y - fj.position.y
+                vx = dxi - dxj
+                vy = dyi - dyj
+
+                # Time to CPA
+                v_sq = vx * vx + vy * vy
+                if v_sq < 1e-6:
+                    continue
+                t_cpa = -(rx * vx + ry * vy) / v_sq
+                if t_cpa < 0 or t_cpa > 120:  # within 2 minutes only
+                    continue
+
+                # Distance at CPA
+                d_cpa = math.hypot(rx + vx * t_cpa, ry + vy * t_cpa)
+                if d_cpa < self.min_distance:
+                    penalties[i] += 1
+                    penalties[j] += 1
+
+        return penalties
 
     def proximity_penalties(self):
         """Smooth penalty that increases as aircraft get closer to separation minimum."""
@@ -166,13 +237,33 @@ class Environment(gym.Env):
                     penalties[i] += penalty
                     penalties[j] += penalty
         return penalties
+    def restricted_airspace_penalties(self):
+        """
+        Check if each flight is in restricted airspace and return penalty flag
+        """
+        penalties = np.zeros(self.num_flights)
+        for i, f in enumerate(self.flights):
+            if i not in self.done and self.restricted_airspace and f.in_restricted_airspace(self.restricted_airspace):
+                penalties[i] = 1
+        return penalties
+    
+    def heading_into_restricted_penalties(self):
+        """
+        Check if each flight's heading vector points into restricted airspace and return penalty flag
+        """
+        penalties = np.zeros(self.num_flights)
+        for i, f in enumerate(self.flights):
+            if i not in self.done and self.restricted_airspace and f.heading_into_restricted_airspace(self.restricted_airspace):
+                penalties[i] = 1
+        return penalties
 
 
     def observation(self) -> List:
         """
         Returns the observation of each agent using fast NumPy vectorization.
-        Layout (5*N + 5): cur_dis, pred_dis, dx, dy, trackdif, airspeed,
-        optimal_airspeed, target_dist, sin(drift), cos(drift)
+        Layout (5*N + 19): cur_dis, pred_dis, dx, dy, trackdif, airspeed,
+        optimal_airspeed, target_dist, sin(drift), cos(drift), in_restricted, heading_into_restricted,
+        + 4 closest restricted vertices (distance, dx, dy for each)
         """
         if self.num_flights == 0:
             return []
@@ -244,6 +335,17 @@ class Environment(gym.Env):
             obs.append(math.hypot(f.position.x - f.target.x, f.position.y - f.target.y))
             obs.append(math.sin(float(f.drift)))
             obs.append(math.cos(float(f.drift)))
+            
+            # Restricted airspace state (as binary 0/1)
+            obs.append(1.0 if f.in_restricted_airspace(self.restricted_airspace) else 0.0)
+            obs.append(1.0 if f.heading_into_restricted_airspace(self.restricted_airspace) else 0.0)
+            
+            # Closest 4 vertices of restricted airspace (distance, dx, dy for each)
+            closest_vertices = f.closest_restricted_vertices(self.restricted_airspace, num_vertices=4)
+            for distance, rel_dx, rel_dy in closest_vertices:
+                obs.append(distance)
+                obs.append(rel_dx)
+                obs.append(rel_dy)
 
             observations_all.append(obs)
 
@@ -272,6 +374,19 @@ class Environment(gym.Env):
         for r, c in zip(rows, cols):
             if r != c:
                 self.conflicts.update((active[r], active[c]))
+
+    def update_restricted_airspace_intrusions(self) -> None:
+        """
+        Updates the set of flights that are in the restricted airspace
+        """
+        self.restricted_airspace_intrusions = set()
+        
+        if self.restricted_airspace is None:
+            return
+        
+        for i, f in enumerate(self.flights):
+            if i not in self.done and f.in_restricted_airspace(self.restricted_airspace):
+                self.restricted_airspace_intrusions.add(i)
 
     def update_done(self) -> None:
         """
@@ -313,17 +428,17 @@ class Environment(gym.Env):
     def step(self, action: List) -> Tuple[List, List, bool, bool, Dict]:
         self.resolution(action)
         self.update_positions()
-        self.update_done()
         self.update_conflicts()
-        rew = self.reward()
-        obs = self.observation()
+        rew = self.reward()          # reward BEFORE update_done so reachedTarget() works
+        self.update_done()           # now mark agents as done
+        obs = self.observation()     # obs reflects new done status
         self.i += 1
         self.checkSpeedDif()
 
         done_t = (self.i == self.max_episode_len) 
         done_e = (len(self.done) == self.num_flights)
 
-       # self.render() # comment out for training    
+        self.render() # comment out for training    
 
         return obs, rew, done_t, done_e, {}
 
@@ -336,6 +451,7 @@ class Environment(gym.Env):
 
     def reset(self, number_flights_training) -> List:
         self.airspace = Airspace.random(self.min_area, self.max_area)
+        self.restricted_airspace = RestrictedAirspace.random(self.min_area, self.max_area)
         self.num_flights = number_flights_training
         self.flights = []
         tol = self.distance_init_buffer * self.tol
@@ -343,7 +459,7 @@ class Environment(gym.Env):
         
         while len(self.flights) < self.num_flights:
             valid = True
-            candidate = Flight.random(self.airspace, self.min_speed, self.max_speed, tol)
+            candidate = Flight.random(self.airspace, self.min_speed, self.max_speed, tol, random_init_heading=self.random_init_heading)
             for f in self.flights:
                 # Replaced shapely distance with math.hypot for fast reset
                 if math.hypot(candidate.position.x - f.position.x, candidate.position.y - f.position.y) < min_distance:
@@ -354,6 +470,7 @@ class Environment(gym.Env):
 
         self.i = 0
         self.conflicts = set()
+        self.restricted_airspace_intrusions = set()
         self.done = set()
 
         minx, miny, maxx, maxy = self.airspace.polygon.buffer(10 * u.nm).bounds
@@ -378,17 +495,32 @@ class Environment(gym.Env):
 
         self.screen.fill(BLACK)
 
+        # Draw main airspace
         sector_pts = [
             world_to_screen(x, y)
             for x, y in self.airspace.polygon.boundary.coords
         ]
         pygame.draw.lines(self.screen, WHITE, False, sector_pts, 1)
 
+        # Draw restricted airspace
+        if self.restricted_airspace:
+            restricted_pts = [
+                world_to_screen(x, y)
+                for x, y in self.restricted_airspace.polygon.boundary.coords
+            ]
+            pygame.draw.lines(self.screen, GREEN, False, restricted_pts, 2)
+
         for i, f in enumerate(self.flights):
             if i in self.done:
                 continue
 
-            color = RED if i in self.conflicts else BLUE
+            # Determine color: RED for conflict, YELLOW for restricted airspace, BLUE for normal
+            if i in self.conflicts:
+                color = RED
+            elif i in self.restricted_airspace_intrusions:
+                color = YELLOW
+            else:
+                color = BLUE
 
             cx, cy = world_to_screen(
                 f.reported_position.x,

@@ -1,7 +1,7 @@
 """
 Definitions module
 """
-from shapely.geometry import Point, Polygon
+from shapely.geometry import Point, Polygon, LineString
 from dataclasses import dataclass, field
 import atcenv.units as u
 import math
@@ -34,10 +34,90 @@ class Airspace:
             y = r * math.sin(alpha)
             return Point(x, y)
 
-        p = [random_point_in_circle(R) for _ in range(3)]
+        p = [random_point_in_circle(R) for _ in range(5)]
         polygon = Polygon(p).convex_hull
 
         while polygon.area < min_area:
+            p.append(random_point_in_circle(R))
+            polygon = Polygon(p).convex_hull
+
+        return cls(polygon=polygon)
+    
+@dataclass
+class RestrictedAirspace:
+    """
+    Restricted Airspace class - smaller airspace inside the main airspace
+    """
+    polygon: Polygon
+
+    @classmethod
+    def random(cls, min_area: float, max_area: float, scale_factor: float = 0.2):
+        """
+        Creates a random restricted airspace sector inside the main airspace
+        
+        :param max_area: maximum area of the main sector (in nm^2)
+        :param min_area: minimum area of the main sector (in nm^2)
+        :param scale_factor: scale factor for the restricted airspace (0-1, default 0.2 for 20% size)
+        :return: random restricted airspace
+        """
+        # Scale down the radius for a smaller airspace
+        R = math.sqrt(max_area / math.pi) * scale_factor
+
+        def random_point_in_circle(radius: float) -> Point:
+            alpha = 2 * math.pi * random.uniform(0., 1.)
+            r = radius * math.sqrt(random.uniform(0., 1.))
+            x = r * math.cos(alpha)
+            y = r * math.sin(alpha)
+            return Point(x, y)
+
+        
+        p = [random_point_in_circle(R) for _ in range(4)]
+        polygon = Polygon(p).convex_hull
+
+        # Scale down the minimum area requirement proportionally
+        scaled_min_area = min_area * (scale_factor ** 2)
+        
+        while polygon.area < scaled_min_area:
+            p.append(random_point_in_circle(R))
+            polygon = Polygon(p).convex_hull
+
+        return cls(polygon=polygon)
+
+@dataclass
+class RestrictedAirspace:
+    """
+    Restricted Airspace class - smaller airspace inside the main airspace
+    """
+    polygon: Polygon
+
+    @classmethod
+    def random(cls, min_area: float, max_area: float, scale_factor: float = 0.2):
+        """
+        Creates a random restricted airspace sector inside the main airspace
+        
+        :param max_area: maximum area of the main sector (in nm^2)
+        :param min_area: minimum area of the main sector (in nm^2)
+        :param scale_factor: scale factor for the restricted airspace (0-1, default 0.2 for 20% size)
+        :return: random restricted airspace
+        """
+        # Scale down the radius for a smaller airspace
+        R = math.sqrt(max_area / math.pi) * scale_factor
+
+        def random_point_in_circle(radius: float) -> Point:
+            alpha = 2 * math.pi * random.uniform(0., 1.)
+            r = radius * math.sqrt(random.uniform(0., 1.))
+            x = r * math.cos(alpha)
+            y = r * math.sin(alpha)
+            return Point(x, y)
+
+        
+        p = [random_point_in_circle(R) for _ in range(4)]
+        polygon = Polygon(p).convex_hull
+
+        # Scale down the minimum area requirement proportionally
+        scaled_min_area = min_area * (scale_factor ** 2)
+        
+        while polygon.area < scaled_min_area:
             p.append(random_point_in_circle(R))
             polygon = Polygon(p).convex_hull
 
@@ -52,6 +132,7 @@ class Flight:
     position: Point
     target: Point
     optimal_airspeed: float
+    random_init_heading: bool = True
 
     airspeed: float = field(init=False)
     track: float = field(init=False)
@@ -66,7 +147,10 @@ class Flight:
         Initialises the track and the airspeed
         :return:
         """
-        self.track = self.bearing
+        if self.random_init_heading:
+            self.track = random.uniform(0, 2 * math.pi)
+        else:
+            self.track = self.bearing
         self.airspeed = self.optimal_airspeed
         
         # Initialise previous speeds
@@ -95,7 +179,7 @@ class Flight:
         return (compass + u.circle) % u.circle
 
     @property
-    def prediction(self, dt: Optional[float] = 20) -> Point:
+    def prediction(self, dt: Optional[float] = 15) -> Point:
         """
         Predicts the future position after dt seconds, maintaining the current speed and track
         :param dt: prediction look-ahead time (in seconds)
@@ -137,8 +221,58 @@ class Flight:
         else:
             return drift
 
+    def in_restricted_airspace(self, restricted_airspace: 'RestrictedAirspace') -> bool:
+        """
+        Check if the aircraft is currently in the restricted airspace
+        
+        :param restricted_airspace: RestrictedAirspace object
+        :return: True if aircraft is in restricted airspace, False otherwise
+        """
+        if restricted_airspace is None:
+            return False
+        return restricted_airspace.polygon.contains(self.position)
+
+    def heading_into_restricted_airspace(self, restricted_airspace: 'RestrictedAirspace', lookahead: float = 50000.0) -> bool:
+        """
+        Check if the aircraft's current heading line intersects with the restricted airspace
+        
+        :param restricted_airspace: RestrictedAirspace object
+        :param lookahead: distance to look ahead along the current track (in meters), default 50km
+        :return: True if heading line intersects restricted airspace, False otherwise
+        """
+        if restricted_airspace is None:
+            return False
+        
+        # Create a line from current position extending in the direction of current track
+        dx = math.sin(self.track) * lookahead
+        dy = math.cos(self.track) * lookahead
+        
+        end_point = Point(self.position.x + dx, self.position.y + dy)
+        heading_line = LineString([self.position, end_point])
+        
+        # Check if the heading line intersects with the restricted airspace boundary
+        return heading_line.intersects(restricted_airspace.polygon)
+
+    def closest_restricted_vertices(self, restricted_airspace: 'RestrictedAirspace', num_vertices: int = 4):
+        if restricted_airspace is None:
+            return [(0.0, 0.0, 0.0)] * num_vertices
+        
+        vertex_data = []
+        for vx, vy in list(restricted_airspace.polygon.exterior.coords)[:-1]:
+            # 1. Get global relative distance
+            dx, dy = vx - self.position.x, vy - self.position.y
+            dist = math.hypot(dx, dy)
+            
+            # 2. Rotate coordinates relative to aircraft heading (track)
+            rel_brg = math.atan2(dx, dy) - self.track
+            vertex_data.append((dist, dist * math.sin(rel_brg), dist * math.cos(rel_brg)))
+        
+        # Sort by distance and pad if necessary
+        vertex_data.sort(key=lambda x: x[0])
+        return (vertex_data + [(0.0, 0.0, 0.0)] * num_vertices)[:num_vertices]
+
     @classmethod
-    def random(cls, airspace: Airspace, min_speed: float, max_speed: float, tol: float = 0.):
+    def random(cls, airspace: Airspace, min_speed: float, max_speed: float, tol: float = 0., random_init_heading: bool = True):
         """
         Creates a random flight
 
@@ -169,6 +303,54 @@ class Flight:
         # random speed
         airspeed = random.uniform(min_speed, max_speed)
 
-        return cls(position, target, airspeed)
+        return cls(position, target, airspeed, random_init_heading=random_init_heading)
+    def in_restricted_airspace(self, restricted_airspace: 'RestrictedAirspace') -> bool:
+        """
+        Check if the aircraft is currently in the restricted airspace
+        
+        :param restricted_airspace: RestrictedAirspace object
+        :return: True if aircraft is in restricted airspace, False otherwise
+        """
+        if restricted_airspace is None:
+            return False
+        return restricted_airspace.polygon.contains(self.position)
 
+    def heading_into_restricted_airspace(self, restricted_airspace: 'RestrictedAirspace', lookahead: float = 50000.0) -> bool:
+        """
+        Check if the aircraft's current heading line intersects with the restricted airspace
+        
+        :param restricted_airspace: RestrictedAirspace object
+        :param lookahead: distance to look ahead along the current track (in meters), default 50km
+        :return: True if heading line intersects restricted airspace, False otherwise
+        """
+        if restricted_airspace is None:
+            return False
+        
+        # Create a line from current position extending in the direction of current track
+        dx = math.sin(self.track) * lookahead
+        dy = math.cos(self.track) * lookahead
+        
+        end_point = Point(self.position.x + dx, self.position.y + dy)
+        heading_line = LineString([self.position, end_point])
+        
+        # Check if the heading line intersects with the restricted airspace boundary
+        return heading_line.intersects(restricted_airspace.polygon)
+
+    def closest_restricted_vertices(self, restricted_airspace: 'RestrictedAirspace', num_vertices: int = 4):
+        if restricted_airspace is None:
+            return [(0.0, 0.0, 0.0)] * num_vertices
+        
+        vertex_data = []
+        for vx, vy in list(restricted_airspace.polygon.exterior.coords)[:-1]:
+            # 1. Get global relative distance
+            dx, dy = vx - self.position.x, vy - self.position.y
+            dist = math.hypot(dx, dy)
+            
+            # 2. Rotate coordinates relative to aircraft heading (track)
+            rel_brg = math.atan2(dx, dy) - self.track
+            vertex_data.append((dist, dist * math.sin(rel_brg), dist * math.cos(rel_brg)))
+        
+        # Sort by distance and pad if necessary
+        vertex_data.sort(key=lambda x: x[0])
+        return (vertex_data + [(0.0, 0.0, 0.0)] * num_vertices)[:num_vertices]
 

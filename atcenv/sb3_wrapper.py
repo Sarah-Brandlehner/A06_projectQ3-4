@@ -12,10 +12,11 @@ from gymnasium import spaces
 from atcenv.env import Environment, NUMBER_INTRUDERS_STATE
 
 # Number of sim steps per RL action (reference uses 5-10)
-ACTION_FREQUENCY = 5
+ACTION_FREQUENCY = 3
 
-# Observation size: 5 * NUMBER_INTRUDERS_STATE + 5
-OBS_SIZE = 5 * NUMBER_INTRUDERS_STATE + 5
+# Observation size: 5 * NUMBER_INTRUDERS_STATE + 16
+# (5 intruder state values + 5 ownship values + 2 restricted airspace flags + 12 closest vertex values)
+OBS_SIZE = 5 * NUMBER_INTRUDERS_STATE + 19
 
 # Normalization constants (matched to reference bluesky-gym ranges)
 INTRUDER_DIST_NORM = 50000.0   # ~27 NM — intruder distances
@@ -99,6 +100,18 @@ class ATCEnvWrapper(gym.Env):
         obs[5*n+2]   = (obs[5*n+2] - TARGET_DIST_NORM * 0.5) / (TARGET_DIST_NORM * 0.5)
 
         # sin/cos drift: already in [-1, 1]
+        vertex_start = 5*n + 5
+        for v in range(4):  # 4 vertices
+            vertex_idx = vertex_start + v * 3
+            if vertex_idx < len(obs):
+                # Distance
+                obs[vertex_idx] = (obs[vertex_idx] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
+            if vertex_idx + 1 < len(obs):
+                # dx
+                obs[vertex_idx + 1] = obs[vertex_idx + 1] / INTRUDER_POS_NORM
+            if vertex_idx + 2 < len(obs):
+                # dy
+                obs[vertex_idx + 2] = obs[vertex_idx + 2] / INTRUDER_POS_NORM
 
         return np.clip(obs, -1.0, 1.0).astype(np.float32)
 
@@ -131,8 +144,6 @@ class ATCEnvWrapper(gym.Env):
                 accumulated_reward += float(rewards[0])
             if done_t or done_e:
                 break
-            # After first step, actor maintains heading (don't re-apply delta)
-            actions[0] = [0.0, 0.0]
 
         # Actor's accumulated reward across all sub-steps
         actor_reward = accumulated_reward

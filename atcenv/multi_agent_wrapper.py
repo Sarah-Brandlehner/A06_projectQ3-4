@@ -76,7 +76,7 @@ class SharedPolicyVecEnv(vec_env.VecEnv):
         self.accumulated_rewards = np.zeros(self.num_flights, dtype=np.float32)
 
         # Per-component reward accumulators for tracking
-        self._component_names = ["drift", "conflict", "target", "proximity"]
+        self._component_names = ["drift", "conflict", "alert", "target"]
         self._accumulated_components = {
             name: np.zeros(self.num_flights, dtype=np.float32)
             for name in self._component_names
@@ -95,6 +95,18 @@ class SharedPolicyVecEnv(vec_env.VecEnv):
         obs[5*n]     = (obs[5*n] - 230.0) / 30.0
         obs[5*n+1]   = (obs[5*n+1] - 230.0) / 30.0
         obs[5*n+2]   = (obs[5*n+2] - TARGET_DIST_NORM * 0.5) / (TARGET_DIST_NORM * 0.5)
+        vertex_start = 5*n + 5
+        for v in range(4):  # 4 vertices
+            vertex_idx = vertex_start + v * 3
+            if vertex_idx < len(obs):
+                # Distance
+                obs[vertex_idx] = (obs[vertex_idx] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
+            if vertex_idx + 1 < len(obs):
+                # dx
+                obs[vertex_idx + 1] = obs[vertex_idx + 1] / INTRUDER_POS_NORM
+            if vertex_idx + 2 < len(obs):
+                # dy
+                obs[vertex_idx + 2] = obs[vertex_idx + 2] / INTRUDER_POS_NORM
 
         return np.clip(obs, -1.0, 1.0).astype(np.float32)
 
@@ -122,22 +134,21 @@ class SharedPolicyVecEnv(vec_env.VecEnv):
         episode_terminated = False
         episode_truncated = False
 
-        # Build actions for the underlying env (only for *actually active* agents)
-        # env.step expects actions array of length (num_active_agents)
-        active_indices = [i for i in range(self.num_flights) if i not in self._env.done]
-        env_actions = np.zeros((len(active_indices), 2), dtype=np.float32)
-        for idx, agent_num in enumerate(active_indices):
-            env_actions[idx] = self.current_actions[agent_num]
-
         # Step simulation ACTION_FREQUENCY times
         for step_i in range(ACTION_FREQUENCY):
+            # Build actions for the underlying env (only for *actually active* agents)
+            # Must rebuild every inner step because if an agent finishes, the active list shifts!
+            active_indices = [i for i in range(self.num_flights) if i not in self._env.done]
+            env_actions = np.zeros((len(active_indices), 2), dtype=np.float32)
+            for idx, agent_num in enumerate(active_indices):
+                env_actions[idx] = self.current_actions[agent_num]
+
             raw_obs_list, rewards, done_t, done_e, info = self._env.step(env_actions)
             
             # Map rewards back to absolute indexing
             if len(rewards) > 0:
                 for idx, agent_num in enumerate(active_indices):
-                    # Sum up the rewards across the sub-steps
-                    self.accumulated_rewards[agent_num] += float(rewards[idx])
+                    self.accumulated_rewards[agent_num] += float(rewards[agent_num])
 
             # Accumulate per-component rewards
             components = self._env.reward_components()
@@ -149,9 +160,6 @@ class SharedPolicyVecEnv(vec_env.VecEnv):
                 episode_terminated = done_e
                 episode_truncated = done_t
                 break
-                
-            # After first step, maintain heading (zero out turning action)
-            env_actions.fill(0.0)
 
 
         # Assign accumulated rewards to the buffer
