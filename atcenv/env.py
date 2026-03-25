@@ -107,7 +107,7 @@ class Environment(gym.Env):
         restricted                  = self.restricted_airspace_penalties() * 0.0 #-10
         heading_into_restricted     = self.heading_into_restricted_penalties() * 0.0 #-0.05
         alerts     = self.alert_penalties() * 0.0                # DISABLED: was overpowering the drift reward
-        target     = self.reachedTarget() * 0.0                  # tutor disables target reward completely
+        target     = self.reachedTarget() * 0.0                 # tutor disables target reward completely
         
         # proximity  = self.proximity_penalties() * -2.0         # disabled
         # what kinda worked was -0.5 for drift (should be higher tho), -6 for conflict, -4 for restricted, -0.25 for heading, 10 for target
