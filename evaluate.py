@@ -8,7 +8,7 @@ Supports two modes:
 Usage:
     python evaluate.py --model results/best_model/best_model.zip --episodes 10 --num-flights 5
     python evaluate.py --model results/best_model/best_model.zip --episodes 10 --num-flights 5 --deploy-all
-    python evaluate.py --model results/shared_reward_4/best_model/best_model.zip --episodes 50 --num-flights 10 --deploy-all
+    python evaluate.py --model results/basic_policy_finetune/best_model/best_model.zip --episodes 50 --num-flights 10 --deploy-all
 """
 import argparse
 import numpy as np
@@ -44,16 +44,19 @@ def normalize_obs(raw_obs):
     # Distance to target
     obs[5*n+2]   = (obs[5*n+2] - TARGET_DIST_NORM * 0.5) / (TARGET_DIST_NORM * 0.5)
 
-    # Restricted airspace flags (already in [0, 1] range)
-    # obs[5*n+3] and obs[5*n+4] - no normalization needed
-    
-    # Closest 1 point of restricted airspace (distance, dx, dy)
-    # Normalize distances and positions similar to intruder data
-    point_idx = 5*n + 7
-    if point_idx < len(obs):
-        obs[point_idx] = (obs[point_idx] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
-        obs[point_idx+1] /= INTRUDER_POS_NORM
-        obs[point_idx+2] /= INTRUDER_POS_NORM
+    # Ownship: 5n to 5n+4
+    # Restricted Block: 5n+5 to 5n+9
+    res_idx = 5 * n + 5
+    if res_idx + 4 < len(obs):
+        # obs[res_idx] is binary 'is_in' -> no norm needed
+        
+        # Distance (res_idx + 1)
+        obs[res_idx+1] = (obs[res_idx+1] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
+        
+        # sin/cos (res_idx + 2, + 3) -> already [-1, 1], no norm needed
+        
+        # Approach Rate (res_idx + 4) -> Normalize by max speed (e.g. 250 m/s)
+        obs[res_idx+4] = obs[res_idx+4] / 250.0
 
     return np.clip(obs, -1.0, 1.0).astype(np.float32)
 

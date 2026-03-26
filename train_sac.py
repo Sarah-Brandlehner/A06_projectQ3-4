@@ -7,11 +7,9 @@ heading + speed actions, 2 closest intruders in observation.
 # USE THE NUMBER OF CORES YOUR CPU HAS
 Usage:
     
-    python train_sac.py --timesteps 300000 --num-flights 10 --num-envs 8 --train-all --run-name "4_intruders_unlocked_physics"
+    python train_sac.py --timesteps 1500000 --num-flights 10 --num-envs 8 --train-all --run-name "relative_speed"
 
-    python train_sac.py --timesteps 2000000 --num-flights 10 --num-envs 8 --train-all --run-name "minimal_reward_ALL_AGENTS"
-    python train_sac.py --timesteps 3000000 --num-flights 10 --num-envs 8 --train-all --run-name "4_intruders_unlocked_physics"
-    python train_sac.py --timesteps 1000000 --num-flights 10 --num-envs 8 --train-all --run-name "fine_5_steps_airspaces_v2" --load "results/fine_5_steps_airspaces/best_model/best_model.zip"
+    python train_sac.py --timesteps 1500000 --num-flights 10 --num-envs 8 --train-all --run-name "basic_policy_finetune" --load "results/basic_policy_finetune/best_model/best_model.zip"
 """
 import argparse
 import os
@@ -194,7 +192,7 @@ def train(args):
             args.load,
             env=train_env,
             custom_objects={
-                "learning_rate": 1e-5,
+                "learning_rate": 3e-5,
                 "buffer_size": 1_000_000, 
                 "batch_size": 1024,
                 "ent_coef": 0.05,
@@ -205,11 +203,11 @@ def train(args):
         model = SAC(
             "MlpPolicy",
             train_env,
-            learning_rate=1e-4,             # 1e-3
+            learning_rate=2e-4,             # 1e-3
             buffer_size=1_000_000,          # 100_000 (increased for multi-agent)
             batch_size=1024,                # 256 (increased for multi-agent)
             tau=0.005,                      # 0.005
-            gamma=0.99,                     # 0.99
+            gamma=0.98,                     # 0.99
             learning_starts=5000,           # 1000
             
             train_freq=8,
