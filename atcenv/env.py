@@ -102,18 +102,18 @@ class Environment(gym.Env):
 
     def reward(self) -> List:
         # Tutor's hybrid drift reward + zero target reward
-        drifts     = self.drift_penalties() * 0.2                # tutor's weight (+0.2 since formula uses 0.5 - abs(drift))
-        conflicts  = self.conflict_penalties() * -40             # tutor's weight
-        restricted                  = self.restricted_airspace_penalties() * 0
-        heading_into_restricted     = self.heading_into_restricted_penalties() * 0
+        drifts     = self.drift_penalties() * 0.5                # tutor's weight (+0.2 since formula uses 0.5 - abs(drift))
+        conflicts  = self.conflict_penalties() * -15             # tutor's weight
+        restricted = self.restricted_airspace_penalties() * -5
+        heading_into_restricted = self.heading_into_restricted_penalties() * -0.025
         alerts     = self.alert_penalties() * 0.0                # DISABLED: was overpowering the drift reward
-        target     = self.reachedTarget() * 0.0                  # tutor disables target reward completely
+        target     = self.reachedTarget() * 10                  # tutor disables target reward completely
         
         # proximity  = self.proximity_penalties() * -2.0         # disabled
         # what kinda worked was -0.5 for drift (should be higher tho), -6 for conflict, -4 for restricted, -0.25 for heading, 10 for target
         # -hits targets - -0.6, -7.5, -4, -0.25, +12
         # kinda works -0.6, -10, -0, -0, +10 - but doesnt really avoid eachother, with -15 conflict we get like 2.5 avconflict, not bad
-        tot_reward = drifts + conflicts + alerts + target
+        tot_reward = drifts + conflicts + alerts + target + restricted + heading_into_restricted
         return tot_reward
 
     def reward_components(self):
@@ -428,6 +428,7 @@ class Environment(gym.Env):
         self.resolution(action)
         self.update_positions()
         self.update_conflicts()
+        self.update_restricted_airspace_intrusions()
         rew = self.reward()          # reward BEFORE update_done so reachedTarget() works
         self.update_done()           # now mark agents as done
         obs = self.observation()     # obs reflects new done status
@@ -437,7 +438,7 @@ class Environment(gym.Env):
         done_t = (self.i == self.max_episode_len) 
         done_e = (len(self.done) == self.num_flights)
 
-        #self.render() # comment out for training    
+        # self.render() # comment out for training    
 
         return obs, rew, done_t, done_e, {}
 
