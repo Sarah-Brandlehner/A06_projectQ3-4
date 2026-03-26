@@ -101,30 +101,49 @@ class Environment(gym.Env):
         return None
 
     def reward(self) -> List:
-        # Tutor's hybrid drift reward + zero target reward
-        drifts     = self.drift_penalties() * 0.2                # tutor's weight (+0.2 since formula uses 0.5 - abs(drift))
-        conflicts  = self.conflict_penalties() * -40             # tutor's weight
-        restricted                  = self.restricted_airspace_penalties() * -10
-        heading_into_restricted     = self.heading_into_restricted_penalties() * -0.05
-        alerts     = self.alert_penalties() * 0.0                # DISABLED: was overpowering the drift reward
-        target     = self.reachedTarget() * 0.0                 # tutor disables target reward completely
+        drifts = self.drift_penalties() * 0.7
+        conflicts = self.conflict_penalties() * -10.0
         
-        # proximity  = self.proximity_penalties() * -2.0         # disabled
-        # what kinda worked was -0.5 for drift (should be higher tho), -6 for conflict, -4 for restricted, -0.25 for heading, 10 for target
-        # -hits targets - -0.6, -7.5, -4, -0.25, +12
-        # kinda works -0.6, -10, -0, -0, +10 - but doesnt really avoid eachother, with -15 conflict we get like 2.5 avconflict, not bad
-        tot_reward = drifts + conflicts + alerts + target + restricted + heading_into_restricted
-        return tot_reward
+        # New: Radial Approach Penalty
+        # Punishment = (Approach Velocity) / (Distance)
+        # This creates a "shield" around the zone that gets stronger as you get closer/faster.
+        restricted_penalties = np.zeros(self.num_flights)
+        for i, f in enumerate(self.flights):
+            if i not in self.done:
+                dist, _, _, approach = f.closest_restricted_point(self.restricted_airspace)
+                if f.in_restricted_airspace(self.restricted_airspace):
+                    restricted_penalties[i] -= 1.0 # Keep the hard penalty for being inside
+                
+                # Only "nudge" them if they are within 3000m (approx 1.6 nm) 
+                # AND flying toward the boundary.
+                elif dist < 3000 and approach > 0: 
+                    # This penalty is now extremely small (~0.01 per step at max speed)
+                    # It acts only as a 'tie-breaker' to tell the AI which way to turn
+                    # if it was already considering a move.
+                    restricted_penalties[i] -= (approach / 3000) * 0.1
+
+        return list(drifts + conflicts + restricted_penalties)
 
     def reward_components(self):
         """Return per-flight arrays for each weighted reward component."""
+        # Calculate restricted penalties locally for component breakdown
+        restricted_p = np.zeros(self.num_flights)
+        shield_p = np.zeros(self.num_flights)
+        for i, f in enumerate(self.flights):
+            if i not in self.done:
+                dist, _, _, approach = f.closest_restricted_point(self.restricted_airspace)
+                if f.in_restricted_airspace(self.restricted_airspace):
+                    restricted_p[i] = -1.0
+                elif dist < 3000 and approach > 0:
+                    shield_p[i] = -(approach / 3000) * 0.1
+
         return {
-            "drift":     self.drift_penalties() * 0.2,
-            "conflict":  self.conflict_penalties() * -40,
+            "drift":     self.drift_penalties() * 0.7,
+            "conflict":  self.conflict_penalties() * -10.0,
+            "restricted": restricted_p,
+            "shield":    shield_p,
             "alert":     self.alert_penalties() * 0.0,
             "target":    self.reachedTarget() * 0.0,
-            "restricted": self.restricted_airspace_penalties() * -10,
-            "heading_into_restricted": self.heading_into_restricted_penalties() * -0.05,
         }
 
     def reachedTarget(self):
@@ -354,7 +373,7 @@ class Environment(gym.Env):
             obs.append(1.0 if f.heading_into_restricted_airspace(self.restricted_airspace) else 0.0)
             
             # Closest 1 point of restricted airspace (distance, dx, dy)
-            dist, rel_dx, rel_dy = f.closest_restricted_point(self.restricted_airspace)
+            dist, rel_dx, rel_dy, _ = f.closest_restricted_point(self.restricted_airspace)
             obs.append(dist)
             obs.append(rel_dx)
             obs.append(rel_dy)

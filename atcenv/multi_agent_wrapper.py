@@ -76,7 +76,7 @@ class SharedPolicyVecEnv(vec_env.VecEnv):
         self.accumulated_rewards = np.zeros(self.num_flights, dtype=np.float32)
 
         # Per-component reward accumulators for tracking
-        self._component_names = ["drift", "conflict", "alert", "target", "restricted", "heading_into_restricted"]
+        self._component_names = ["drift", "conflict", "alert", "target", "restricted", "shield"]
         self._accumulated_components = {
             name: np.zeros(self.num_flights, dtype=np.float32)
             for name in self._component_names

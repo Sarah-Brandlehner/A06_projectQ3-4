@@ -273,9 +273,9 @@ class Flight:
         return (vertex_data + [(0.0, 0.0, 0.0)] * num_vertices)[:num_vertices]
 
     def closest_restricted_point(self, restricted_airspace: 'RestrictedAirspace'):
-        """Finds the single closest point on the restricted boundary and returns (dist, rel_dx, rel_dy) in heading-relative coords"""
+        """Finds the single closest point on the restricted boundary and returns (dist, rel_dx, rel_dy, approach_velocity)"""
         if restricted_airspace is None:
-            return (0.0, 0.0, 0.0)
+            return (0.0, 0.0, 0.0, 0.0)
         
         # Find the point on the exterior linear ring closest to aircraft position
         exterior = restricted_airspace.polygon.exterior
@@ -284,9 +284,17 @@ class Flight:
         dx, dy = closest_p.x - self.position.x, closest_p.y - self.position.y
         dist = math.hypot(dx, dy)
         
+        # Approach velocity: aircraft velocity dot-product with normalized vector toward closest point
+        if dist > 1e-6:
+            normalized_dx, normalized_dy = dx / dist, dy / dist
+            vx, vy = self.components
+            approach_velocity = vx * normalized_dx + vy * normalized_dy
+        else:
+            approach_velocity = 0.0
+
         # Rotate to heading-relative coordinates
         rel_brg = math.atan2(dx, dy) - self.track
-        return (dist, dist * math.sin(rel_brg), dist * math.cos(rel_brg))
+        return (dist, dist * math.sin(rel_brg), dist * math.cos(rel_brg), approach_velocity)
 
     @classmethod
     def random(cls, airspace: Airspace, min_speed: float, max_speed: float, tol: float = 0., random_init_heading: bool = True):
