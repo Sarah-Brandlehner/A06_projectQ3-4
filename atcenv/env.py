@@ -104,16 +104,22 @@ class Environment(gym.Env):
         # Tutor's hybrid drift reward + zero target reward
         drifts     = self.drift_penalties() * 0.5                # tutor's weight (+0.2 since formula uses 0.5 - abs(drift))
         conflicts  = self.conflict_penalties() * -15             # tutor's weight
+        
         restricted = self.restricted_airspace_penalties() * -5
+
         heading_into_restricted = self.heading_into_restricted_penalties() * -0.025
-        alerts     = self.alert_penalties() * 0.0                # DISABLED: was overpowering the drift reward
+
+        # Distance based reward as in -exp(-distance)
+        exp_grad_restricted = self.restricted_area_exp_grad_penalties(1.0) * 1.0  # weights to be tuned
+        
+        
         target     = self.reachedTarget() * 10                  # tutor disables target reward completely
         
         # proximity  = self.proximity_penalties() * -2.0         # disabled
         # what kinda worked was -0.5 for drift (should be higher tho), -6 for conflict, -4 for restricted, -0.25 for heading, 10 for target
         # -hits targets - -0.6, -7.5, -4, -0.25, +12
         # kinda works -0.6, -10, -0, -0, +10 - but doesnt really avoid eachother, with -15 conflict we get like 2.5 avconflict, not bad
-        tot_reward = drifts + conflicts + alerts + target + restricted + heading_into_restricted
+        tot_reward = drifts + conflicts + alerts + target + restricted + heading_into_restricted + exp_grad_restricted
         return tot_reward
 
     def reward_components(self):
@@ -121,7 +127,6 @@ class Environment(gym.Env):
         return {
             "drift":     self.drift_penalties() * 0.2,
             "conflict":  self.conflict_penalties() * -40,
-            "alert":     self.alert_penalties() * 0.0,
             "target":    self.reachedTarget() * 0.0,
         }
 
@@ -175,47 +180,24 @@ class Environment(gym.Env):
                 penalties[i] = 1
         return penalties
 
-    def alert_penalties(self):
-        """Penalty for predicted conflicts within 2 minutes (paper Eq. 22, wa=5).
-        Uses Closest Point of Approach (CPA) between each active pair."""
+    def restricted_area_exp_grad_penalties(self, dist_weight=1.0):
+        """
+        Exponential gradient penalty based on distance to restricted airspace border.
+        Returns -1 if inside restricted airspace, otherwise (-1)*exp((-1)*distance/dist_weight)
+        where distance is the closest distance to the border.
+        """
         penalties = np.zeros(self.num_flights)
-        active = [i for i in range(self.num_flights) if i not in self.done]
-        if len(active) < 2:
-            return penalties
-
-        for idx_a in range(len(active)):
-            i = active[idx_a]
-            fi = self.flights[i]
-            dxi, dyi = fi.components
-            for idx_b in range(idx_a + 1, len(active)):
-                j = active[idx_b]
-                fj = self.flights[j]
-                dxj, dyj = fj.components
-
-                # Relative position and velocity
-                rx = fi.position.x - fj.position.x
-                ry = fi.position.y - fj.position.y
-                vx = dxi - dxj
-                vy = dyi - dyj
-
-                # Time to CPA
-                v_sq = vx * vx + vy * vy
-                if v_sq < 1e-6:
-                    continue
-                t_cpa = -(rx * vx + ry * vy) / v_sq
-                if t_cpa < 0 or t_cpa > 120:  # within 2 minutes only
-                    continue
-
-                # Distance at CPA
-                d_cpa = math.hypot(rx + vx * t_cpa, ry + vy * t_cpa)
-                if d_cpa < self.min_distance:
-                    penalties[i] += 1
-                    penalties[j] += 1
-
+        for i, f in enumerate(self.flights):
+            if i not in self.done and self.restricted_airspace:
+                # Check if aircraft is inside restricted airspace
+                if f.in_restricted_airspace(self.restricted_airspace):
+                    penalties[i] = -1.0  # Fixed penalty when inside
+                else:
+                    # Calculate the closest distance from aircraft position to restricted airspace boundary
+                    point = Point(f.position.x, f.position.y)
+                    distance = point.distance(self.restricted_airspace.polygon)
+                    penalties[i] = (-1) * math.exp((-1) * distance / dist_weight)
         return penalties
-
-    def proximity_penalties(self):
-        """Smooth penalty that increases as aircraft get closer to separation minimum."""
         penalties = np.zeros(self.num_flights)
         active = [i for i in range(self.num_flights) if i not in self.done]
         if len(active) < 2:
@@ -340,8 +322,19 @@ class Environment(gym.Env):
             obs.append(1.0 if f.in_restricted_airspace(self.restricted_airspace) else 0.0)
             obs.append(1.0 if f.heading_into_restricted_airspace(self.restricted_airspace) else 0.0)
             
-            # Closest 1 point of restricted airspace (distance, dx, dy)
-            dist, rel_dx, rel_dy = f.closest_restricted_point(self.restricted_airspace)
+            # Closest point of restricted airspace (distance, dx, dy)
+            if self.restricted_airspace:
+                point = Point(f.position.x, f.position.y)
+                poly = self.restricted_airspace.polygon
+                nearest = nearest_points(poly, point)
+                closest_point = nearest[0]  # point on polygon boundary
+                
+                dist = point.distance(closest_point)
+                rel_dx = closest_point.x - f.position.x
+                rel_dy = closest_point.y - f.position.y
+            else:
+                dist, rel_dx, rel_dy = 0.0, 0.0, 0.0
+            
             obs.append(dist)
             obs.append(rel_dx)
             obs.append(rel_dy)
