@@ -9,15 +9,9 @@ Usage:
     
     python train_sac.py --timesteps 300000 --num-flights 10 --num-envs 8 --train-all --run-name "4_intruders_unlocked_physics"
 
-<<<<<<< HEAD
-    python train_sac.py --timesteps 1000000 --num-flights 10 --num-envs 24 --run-name "test_03drift_50conflict_ALL_AGENTS" --train-all
-
-    python train_sac.py --run-name run_1_baseline
-=======
     python train_sac.py --timesteps 2000000 --num-flights 10 --num-envs 8 --train-all --run-name "minimal_reward_ALL_AGENTS"
     python train_sac.py --timesteps 3000000 --num-flights 10 --num-envs 8 --train-all --run-name "4_intruders_unlocked_physics"
     python train_sac.py --timesteps 1000000 --num-flights 10 --num-envs 8 --train-all --run-name "fine_5_steps_airspaces_v2" --load "results/fine_5_steps_airspaces/best_model/best_model.zip"
->>>>>>> origin/johannes_visualization
 """
 import argparse
 import os

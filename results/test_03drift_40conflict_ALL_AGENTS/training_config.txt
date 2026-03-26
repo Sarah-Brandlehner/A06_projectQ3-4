@@ -1,19 +1,11 @@
 Training Configuration
 ==================================================
-<<<<<<< HEAD
-Date: 2026-03-17 15:05:26
-=======
 Date: 2026-03-17 15:43:59
->>>>>>> origin/johannes_visualization
 Run name: test_03drift_40conflict_ALL_AGENTS
 
 --- Training Parameters ---
 Mode:            ALL AGENTS (Deploy-all)
-<<<<<<< HEAD
-Timesteps:       200000
-=======
 Timesteps:       2000000
->>>>>>> origin/johannes_visualization
 Num flights:     10
 Num envs:        8
 Algorithm:       SAC (MlpPolicy)

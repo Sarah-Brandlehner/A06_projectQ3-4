@@ -12,12 +12,6 @@ Commands:
  
     To run the visualization in a specific run directory, use the --run-dir argument:
 
-<<<<<<< HEAD
-    python visualize.py compare --run-dir results/test_03drift_50conflict_ALL_AGENTS
-    python visualize.py evaluate --run-dir results/test_03drift_40conflict_ALL_AGENTS
-    python visualize.py training --run-dir results/test_03drift_40conflict_ALL_AGENTS
-    python visualize.py trajectory --run-dir results/test_03drift_40conflict_ALL_AGENTS
-=======
     python visualize.py compare --run-dir results/test_03drift_40conflict
     python visualize.py evaluate --run-dir results/shared_reward
     python visualize.py training --run-dir results/expanded_obs_matrix_4
@@ -36,7 +30,6 @@ Commands:
     python visualize.py evaluate --run-dir results/fine_5_steps_airspaces --no-random-heading --workers 8 --episodes 100
     
     python visualize.py compare --run-dir results/minimal_reward_ALL_AGENTS --no-random-heading
->>>>>>> origin/johannes_visualization
 
 """
 import argparse
@@ -578,15 +571,11 @@ if __name__ == "__main__":
     parser.add_argument("--model-name", type=str, default="best_model/best_model.zip",
                         help="Which model inside the run-dir to evaluate")
     parser.add_argument("--episodes", type=int, default=100)
-<<<<<<< HEAD
-    parser.add_argument("--num-flights", type=int, default=5)
-=======
     parser.add_argument("--num-flights", type=int, default=10)
     parser.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) // 2),
                         help="Number of parallel worker processes for evaluation")
     parser.add_argument("--no-random-heading", action="store_true", 
                         help="Evaluate on perfectly straight initial headings instead of randomized ones.")
->>>>>>> origin/johannes_visualization
     args = parser.parse_args()
     
     random_heading_val = not args.no_random_heading

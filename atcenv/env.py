@@ -101,14 +101,6 @@ class Environment(gym.Env):
         return None
 
     def reward(self) -> List:
-<<<<<<< HEAD
-        # Penalties per sub-step (accumulated across ACTION_FREQUENCY steps in wrapper)
-        # Effective per RL step: drift ≈ -2.5, conflict = -10.0, target = +1.0
-        drifts     = self.drift_penalties() * -0.3
-        conflicts  = self.conflict_penalties() * -5.0
-        target     = self.reachedTarget() * 1.0
-        tot_reward = drifts + conflicts + target
-=======
         # Tutor's hybrid drift reward + zero target reward
         drifts     = self.drift_penalties() * 0.5                # tutor's weight (+0.2 since formula uses 0.5 - abs(drift))
         conflicts  = self.conflict_penalties() * -40             # tutor's weight
@@ -122,7 +114,6 @@ class Environment(gym.Env):
         # -hits targets - -0.6, -7.5, -4, -0.25, +12
         # kinda works -0.6, -10, -0, -0, +10 - but doesnt really avoid eachother, with -15 conflict we get like 2.5 avconflict, not bad
         tot_reward = drifts + conflicts + alerts + target + restricted + heading_into_restricted
->>>>>>> origin/johannes_visualization
         return tot_reward
 
     def reward_components(self):
