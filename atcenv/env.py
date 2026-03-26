@@ -106,6 +106,7 @@ class Environment(gym.Env):
         conflicts  = self.conflict_penalties() * -40             # tutor's weight
         restricted                  = self.restricted_airspace_penalties() * (-10) #-10
         heading_into_restricted     = self.heading_into_restricted_penalties() * (-0.1) #-0.05
+        exiting_restricted          = self.exiting_restricted_airspace_reward() * 2.0  # Reward for exiting quickly
         alerts     = self.alert_penalties() * 0.0                # DISABLED: was overpowering the drift reward
         target     = self.reachedTarget() * 1                 # tutor disables target reward completely
         
@@ -113,7 +114,7 @@ class Environment(gym.Env):
         # what kinda worked was -0.5 for drift (should be higher tho), -6 for conflict, -4 for restricted, -0.25 for heading, 10 for target
         # -hits targets - -0.6, -7.5, -4, -0.25, +12
         # kinda works -0.6, -10, -0, -0, +10 - but doesnt really avoid eachother, with -15 conflict we get like 2.5 avconflict, not bad
-        tot_reward = drifts + conflicts + alerts + target + restricted + heading_into_restricted
+        tot_reward = drifts + conflicts + alerts + target + restricted + heading_into_restricted + exiting_restricted
         return tot_reward
 
     def reward_components(self):
@@ -125,6 +126,7 @@ class Environment(gym.Env):
             "target":    self.reachedTarget() * 1,
             "restricted": self.restricted_airspace_penalties() * (-10), #-10
             "heading_into_restricted": self.heading_into_restricted_penalties() * (-0.1), #-0.05
+            "exiting_restricted": self.exiting_restricted_airspace_reward() * 2.0,
         }
 
     def reachedTarget(self):
@@ -154,7 +156,12 @@ class Environment(gym.Env):
         drift = np.zeros(self.num_flights)
         for i, f in enumerate(self.flights):
             if i not in self.done:
-                drift[i] = 0.5 - abs(f.drift)   # tutor's formula: rewards on-track, penalizes off-track
+                # Disable drift reward/penalty when in restricted airspace
+                # Aircraft should focus on exiting, not maintaining heading
+                if self.restricted_airspace and f.in_restricted_airspace(self.restricted_airspace):
+                    drift[i] = 0
+                else:
+                    drift[i] = 0.5 - abs(f.drift)   # tutor's formula: rewards on-track, penalizes off-track
         return drift
     
     def restricted_airspace_penalties(self):
@@ -176,6 +183,31 @@ class Environment(gym.Env):
             if i not in self.done and self.restricted_airspace and f.heading_into_restricted_airspace(self.restricted_airspace):
                 penalties[i] = 1
         return penalties
+
+    def exiting_restricted_airspace_reward(self):
+        """
+        Reward aircraft for exiting the restricted airspace quickly.
+        Provides positive reward to incentivize fast exit and minimize time in restricted zone.
+        """
+        rewards = np.zeros(self.num_flights)
+        for i in range(self.num_flights):
+            if i not in self.done:
+                # Check if aircraft was in restricted airspace last step
+                if not hasattr(self, 'prev_restricted_status'):
+                    self.prev_restricted_status = {}
+                
+                was_in_restricted = self.prev_restricted_status.get(i, False)
+                is_in_restricted = (self.restricted_airspace and 
+                                   self.flights[i].in_restricted_airspace(self.restricted_airspace))
+                
+                # Reward for successfully exiting
+                if was_in_restricted and not is_in_restricted:
+                    rewards[i] = 1.0  # Reward for exiting
+                
+                # Update status for next step
+                self.prev_restricted_status[i] = is_in_restricted
+        
+        return rewards
 
     def alert_penalties(self):
         """Penalty for predicted conflicts within 2 minutes (paper Eq. 22, wa=5).
@@ -351,7 +383,7 @@ class Environment(gym.Env):
             
             # Restricted airspace state (as binary 0/1)
             obs.append(1.0 if f.in_restricted_airspace(self.restricted_airspace) else 0.0)
-            obs.append(1.0 if f.heading_into_restricted_airspace(self.restricted_airspace) else 0.0)
+            obs.append(f.heading_into_restricted_airspace_gradient(self.restricted_airspace))
             
             # Closest 1 point of restricted airspace (distance, dx, dy)
             dist, rel_dx, rel_dy = f.closest_restricted_point(self.restricted_airspace)
@@ -472,7 +504,7 @@ class Environment(gym.Env):
         
         while len(self.flights) < self.num_flights:
             valid = True
-            candidate = Flight.random(self.airspace, self.min_speed, self.max_speed, tol, random_init_heading=self.random_init_heading)
+            candidate = Flight.random(self.airspace, self.min_speed, self.max_speed, tol, random_init_heading=self.random_init_heading, restricted_airspace=self.restricted_airspace)
             for f in self.flights:
                 # Replaced shapely distance with math.hypot for fast reset
                 if math.hypot(candidate.position.x - f.position.x, candidate.position.y - f.position.y) < min_distance:
@@ -485,6 +517,7 @@ class Environment(gym.Env):
         self.conflicts = set()
         self.restricted_airspace_intrusions = set()
         self.done = set()
+        self.prev_restricted_status = {}  # Track restricted airspace status for exit rewards
 
         minx, miny, maxx, maxy = self.airspace.polygon.buffer(10 * u.nm).bounds
         self.world_bounds = (minx, miny, maxx, maxy)

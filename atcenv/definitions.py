@@ -294,7 +294,7 @@ class Flight:
         return dist, r_dx, r_dy
 
     @classmethod
-    def random(cls, airspace: Airspace, min_speed: float, max_speed: float, tol: float = 0., random_init_heading: bool = True):
+    def random(cls, airspace: Airspace, min_speed: float, max_speed: float, tol: float = 0., random_init_heading: bool = True, restricted_airspace: Optional['RestrictedAirspace'] = None):
         """
         Creates a random flight
 
@@ -302,6 +302,8 @@ class Flight:
         :param max_speed: maximum speed of the flights (in kt)
         :param min_speed: minimum speed of the flights (in kt)
         :param tol: tolerance to consider that the target has been reached (in meters)
+        :param random_init_heading: whether to use random initial heading
+        :param restricted_airspace: optional RestrictedAirspace to avoid spawning in
         :return: random flight
         """
         def random_point_in_polygon(polygon: Polygon) -> Point:
@@ -311,8 +313,10 @@ class Flight:
                 if polygon.contains(point):
                     return point
 
-        # random position
+        # random position - avoid restricted airspace if provided
         position = random_point_in_polygon(airspace.polygon)
+        while restricted_airspace is not None and restricted_airspace.polygon.contains(position):
+            position = random_point_in_polygon(airspace.polygon)
 
         # random target
         boundary = airspace.polygon.boundary
@@ -357,6 +361,47 @@ class Flight:
         
         # Check if the heading line intersects with the restricted airspace boundary
         return heading_line.intersects(restricted_airspace.polygon)
+
+    def heading_into_restricted_airspace_gradient(self, restricted_airspace: 'RestrictedAirspace') -> float:
+        """
+        Returns a gradient value (0-1) representing how directly the aircraft is heading into the restricted airspace.
+        
+        0 = not heading into restricted airspace
+        0-1 = gradient based on angle between current bearing and direction to closest restricted point
+        1 = directly heading toward the closest restricted point
+        
+        :param restricted_airspace: RestrictedAirspace object
+        :return: gradient value from 0 to 1
+        """
+        if restricted_airspace is None:
+            return 0.0
+        
+        # Get the closest point on the boundary
+        exterior = restricted_airspace.polygon.exterior
+        closest_p = exterior.interpolate(exterior.project(self.position))
+        
+        # Calculate bearing to closest point
+        dx = closest_p.x - self.position.x
+        dy = closest_p.y - self.position.y
+        bearing_to_closest = math.atan2(dx, dy)
+        
+        # Calculate angle difference (normalize to 0-π)
+        angle_diff = abs(bearing_to_closest - self.track)
+        
+        # Normalize angle to 0-π range (shortest angular distance)
+        while angle_diff > math.pi:
+            angle_diff = 2 * math.pi - angle_diff
+        
+        # If angle difference > π/2, we're not heading toward the restricted airspace
+        if angle_diff > math.pi / 2:
+            return 0.0
+        
+        # Map angle_diff from 0 to π/2 into gradient 1 to 0
+        # Small angle = directly heading toward = high gradient (close to 1)
+        # Large angle (up to π/2) = not heading directly toward = low gradient (close to 0)
+        gradient = 1.0 - (angle_diff / (math.pi / 2))
+        
+        return gradient
 
     def closest_restricted_point(self, restricted_airspace: 'RestrictedAirspace'):
         """Finds the single closest point on the restricted boundary and returns (dist, rel_dx, rel_dy)"""

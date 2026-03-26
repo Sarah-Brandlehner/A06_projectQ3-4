@@ -11,7 +11,7 @@ Usage:
 
     python train_sac.py --timesteps 2000000 --num-flights 10 --num-envs 8 --train-all --run-name "minimal_reward_ALL_AGENTS"
     python train_sac.py --timesteps 3000000 --num-flights 10 --num-envs 8 --train-all --run-name "4_intruders_unlocked_physics"
-    python train_sac.py --timesteps 1000000 --num-flights 10 --num-envs 8 --train-all --run-name "fine_5_steps_airspaces_v2" --load "results/fine_5_steps_airspaces/best_model/best_model.zip"
+    python train_sac.py --timesteps 1000000 --num-flights 10 --num-envs 6 --train-all --run-name "fine_5_steps_airspaces_v3" --load "results/fine_5_steps_airspaces_v2/best_model/best_model.zip"
 """
 import argparse
 import os
