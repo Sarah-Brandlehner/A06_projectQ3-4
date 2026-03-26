@@ -254,44 +254,41 @@ class Flight:
         # Check if the heading line intersects with the restricted airspace boundary
         return heading_line.intersects(restricted_airspace.polygon)
 
-    def closest_restricted_vertices(self, restricted_airspace: 'RestrictedAirspace', num_vertices: int = 4):
-        if restricted_airspace is None:
-            return [(0.0, 0.0, 0.0)] * num_vertices
-        
-        vertex_data = []
-        for vx, vy in list(restricted_airspace.polygon.exterior.coords)[:-1]:
-            # 1. Get global relative distance
-            dx, dy = vx - self.position.x, vy - self.position.y
-            dist = math.hypot(dx, dy)
-            
-            # 2. Rotate coordinates relative to aircraft heading (track)
-            rel_brg = math.atan2(dx, dy) - self.track
-            vertex_data.append((dist, dist * math.sin(rel_brg), dist * math.cos(rel_brg)))
-        
-        # Sort by distance and pad if necessary
-        vertex_data.sort(key=lambda x: x[0])
-        return (vertex_data + [(0.0, 0.0, 0.0)] * num_vertices)[:num_vertices]
-
     def closest_restricted_point(self, restricted_airspace: 'RestrictedAirspace'):
         """
-        Get the distance and relative position to the closest point on the restricted airspace boundary
-        
+        Get the distance and relative heading/proximity features to the closest point on the restricted airspace boundary.
+
         :param restricted_airspace: RestrictedAirspace object
-        :return: (distance, relative_dx, relative_dy)
+        :return: (distance, sin_bearing, cos_bearing, approach_dot)
         """
         if restricted_airspace is None:
-            return 0.0, 0.0, 0.0
-        
+            return 0.0, 0.0, 0.0, 0.0
+
         point = Point(self.position.x, self.position.y)
         poly = restricted_airspace.polygon
         nearest = nearest_points(poly, point)
         closest_point = nearest[0]  # point on polygon
-        
-        dist = point.distance(closest_point)
-        r_dx = closest_point.x - self.position.x
-        r_dy = closest_point.y - self.position.y
-        
-        return dist, r_dx, r_dy
+
+        dx = closest_point.x - self.position.x
+        dy = closest_point.y - self.position.y
+        dist = math.hypot(dx, dy)
+
+        # Relative bearing from current heading to closest restricted vertex
+        if dist > 1e-6:
+            rel_brg = math.atan2(dx, dy) - self.track
+            rel_brg = (rel_brg + math.pi) % (2 * math.pi) - math.pi
+            s_brg = math.sin(rel_brg)
+            c_brg = math.cos(rel_brg)
+        else:
+            s_brg, c_brg = 0.0, 1.0
+
+        # Approach rate: projection of current velocity onto vector to restricted point
+        v_dx, v_dy = self.components
+        approach = 0.0
+        if dist > 1e-6:
+            approach = (v_dx * dx + v_dy * dy) / dist
+
+        return dist, s_brg, c_brg, approach
 
     @classmethod
     def random(cls, airspace: Airspace, min_speed: float, max_speed: float, tol: float = 0., random_init_heading: bool = True):
@@ -359,18 +356,28 @@ class Flight:
         return heading_line.intersects(restricted_airspace.polygon)
 
     def closest_restricted_point(self, restricted_airspace: 'RestrictedAirspace'):
-        """Finds the single closest point on the restricted boundary and returns (dist, rel_dx, rel_dy)"""
+        """Finds the single closest point on the restricted boundary and returns (dist, sin_brg, cos_brg, approach_rate)"""
         if restricted_airspace is None:
-            return (0.0, 0.0, 0.0)
-        
+            return 0.0, 0.0, 0.0, 0.0
+
         # Find the point on the exterior linear ring closest to aircraft position
         exterior = restricted_airspace.polygon.exterior
         closest_p = exterior.interpolate(exterior.project(self.position))
-        
+
         dx, dy = closest_p.x - self.position.x, closest_p.y - self.position.y
         dist = math.hypot(dx, dy)
-        
-        # Rotate to heading-relative coordinates
-        rel_brg = math.atan2(dx, dy) - self.track
-        return (dist, dist * math.sin(rel_brg), dist * math.cos(rel_brg))
+
+        # Relative bearing from current heading to the closest point
+        if dist > 1e-6:
+            rel_brg = math.atan2(dx, dy) - self.track
+            rel_brg = (rel_brg + math.pi) % (2 * math.pi) - math.pi
+            s_brg = math.sin(rel_brg)
+            c_brg = math.cos(rel_brg)
+            v_dx, v_dy = self.components
+            approach = (v_dx*dx + v_dy*dy) / dist
+        else:
+            s_brg, c_brg = 0.0, 1.0
+            approach = 0.0
+
+        return dist, s_brg, c_brg, approach
 

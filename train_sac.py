@@ -7,9 +7,9 @@ heading + speed actions, 2 closest intruders in observation.
 # USE THE NUMBER OF CORES YOUR CPU HAS
 Usage:
     
-    python train_sac.py --timesteps 500000 --num-flights 10 --num-envs 8 --train-all --run-name "basic_policy"
+    python train_sac.py --timesteps 1500000 --num-flights 10 --num-envs 8 --train-all --run-name "relative_speed"
 
-    python train_sac.py --timesteps 200000 --num-flights 10 --num-envs 8 --train-all --run-name "basic_policy_finetune" --load "results/basic_policy/best_model/best_model.zip"
+    python train_sac.py --timesteps 1500000 --num-flights 10 --num-envs 8 --train-all --run-name "basic_policy_finetune" --load "results/basic_policy_finetune/best_model/best_model.zip"
 """
 import argparse
 import os

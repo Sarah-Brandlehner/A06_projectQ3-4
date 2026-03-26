@@ -13,9 +13,9 @@ Commands:
     To run the visualization in a specific run directory, use the --run-dir argument:
 
     python visualize.py compare --run-dir results/test_03drift_40conflict
-    python visualize.py evaluate --run-dir results/shared_reward
+    python visualize.py evaluate --run-dir results/relative_speed --workers 8
     python visualize.py training --run-dir results/expanded_obs_matrix_4
-    python visualize.py trajectory --run-dir results/shared_reward
+    python visualize.py trajectory --run-dir results/basic_policy_finetune
     python visualize.py compare --run-dir results/alert_shared_reward_ALL_AGENTS
     python visualize.py evaluate --run-dir results/minimal_reward_ALL_AGENTS
     python visualize.py training --run-dir results/test_03drift_40conflict
@@ -23,7 +23,7 @@ Commands:
     python visualize.py evaluate --run-dir results/05drift_08conflict_1.5target_02proximity_ALL_AGENTS --episodes 100 --workers 8
     python visualize.py compare --run-dir results/05drift_06conflict_01target_02proximity_ALL_AGENTS --workers 8
     python visualize.py training --run-dir results/<run> --workers 8
-    python visualize.py trajectory --run-dir results/<run> --workers 8
+    python visualize.py trajectory --run-dir results/basic_policy --workers 8
 
     python visualize.py evaluate --run-dir results/4_intruders_unlocked_physics --no-random-heading
     python visualize.py evaluate --run-dir results/minimal_reward_ALL_AGENTS --no-random-heading --workers 8
@@ -68,20 +68,19 @@ def normalize_obs(raw_obs):
     # Restricted airspace flags (already in [0, 1] range)
     # obs[5*n+3] and obs[5*n+4] - no normalization needed
     
-    # Closest 4 vertices of restricted airspace (distance, dx, dy for each)
-    # Normalize distances and positions similar to intruder data
-    # restricted flags are at 5n+5 and 5n+6
-    # The closest point (dist, dx, dy) starts at 5n+7
-    point_start = 5 * n + 7
-    if point_start < len(obs):
-        # Normalize Distance
-        obs[point_start] = (obs[point_start] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
-        # Normalize dx
-        if point_start + 1 < len(obs):
-            obs[point_start + 1] = obs[point_start + 1] / INTRUDER_POS_NORM
-        # Normalize dy
-        if point_start + 2 < len(obs):
-            obs[point_start + 2] = obs[point_start + 2] / INTRUDER_POS_NORM
+   # Ownship: 5n to 5n+4
+    # Restricted Block: 5n+5 to 5n+9
+    res_idx = 5 * n + 5
+    if res_idx + 4 < len(obs):
+        # obs[res_idx] is binary 'is_in' -> no norm needed
+        
+        # Distance (res_idx + 1)
+        obs[res_idx+1] = (obs[res_idx+1] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
+        
+        # sin/cos (res_idx + 2, + 3) -> already [-1, 1], no norm needed
+        
+        # Approach Rate (res_idx + 4) -> Normalize by max speed (e.g. 250 m/s)
+        obs[res_idx+4] = obs[res_idx+4] / 250.0
 
     return np.clip(obs, -1.0, 1.0).astype(np.float32)
 
