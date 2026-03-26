@@ -17,7 +17,7 @@ from gymnasium import spaces
 from atcenv.env import Environment, NUMBER_INTRUDERS_STATE
 from atcenv.sb3_wrapper import (
     ACTION_FREQUENCY, OBS_SIZE,
-    INTRUDER_DIST_NORM, INTRUDER_POS_NORM, TARGET_DIST_NORM
+    INTRUDER_DIST_NORM, INTRUDER_POS_NORM, TARGET_DIST_NORM, SPEED_NORM
 )
 
 
@@ -75,6 +75,13 @@ class SharedPolicyVecEnv(vec_env.VecEnv):
         # Keep track of rewards accumulated over ACTION_FREQUENCY sub-steps
         self.accumulated_rewards = np.zeros(self.num_flights, dtype=np.float32)
 
+        # Per-component reward accumulators for tracking
+        self._component_names = ["drift", "conflict", "alert", "target"]
+        self._accumulated_components = {
+            name: np.zeros(self.num_flights, dtype=np.float32)
+            for name in self._component_names
+        }
+
     def _normalize_obs(self, raw_obs):
         """Normalize a single observation vector using sb3_wrapper constants."""
         obs = np.array(raw_obs, dtype=np.float32)
@@ -85,9 +92,17 @@ class SharedPolicyVecEnv(vec_env.VecEnv):
         obs[2*n:3*n] = obs[2*n:3*n] / INTRUDER_POS_NORM
         obs[3*n:4*n] = obs[3*n:4*n] / INTRUDER_POS_NORM
         obs[4*n:5*n] = obs[4*n:5*n] / np.pi
-        obs[5*n]     = (obs[5*n] - 230.0) / 30.0
-        obs[5*n+1]   = (obs[5*n+1] - 230.0) / 30.0
-        obs[5*n+2]   = (obs[5*n+2] - TARGET_DIST_NORM * 0.5) / (TARGET_DIST_NORM * 0.5)
+        obs[5*n:6*n] = obs[5*n:6*n] / SPEED_NORM
+        obs[6*n:7*n] = obs[6*n:7*n] / SPEED_NORM
+        obs[7*n]     = (obs[7*n] - 230.0) / 30.0
+        obs[7*n+1]   = (obs[7*n+1] - 230.0) / 30.0
+        obs[7*n+2]   = (obs[7*n+2] - TARGET_DIST_NORM * 0.5) / (TARGET_DIST_NORM * 0.5)
+        
+        point_start = 7*n + 7
+        if point_start < len(obs):
+            obs[point_start] = (obs[point_start] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
+            obs[point_start+1] = obs[point_start+1] / INTRUDER_POS_NORM
+            obs[point_start+2] = obs[point_start+2] / INTRUDER_POS_NORM
 
         return np.clip(obs, -1.0, 1.0).astype(np.float32)
 
@@ -107,40 +122,49 @@ class SharedPolicyVecEnv(vec_env.VecEnv):
         """SB3 calls this second. We execute the actions in the env here."""
         
         self.accumulated_rewards.fill(0.0)
+        for name in self._component_names:
+            self._accumulated_components[name].fill(0.0)
         
         # We must track actual environment dones separately, 
         # because SB3 expects an env to instantly reset when done.
         episode_terminated = False
         episode_truncated = False
 
-        # Build actions for the underlying env (only for *actually active* agents)
-        # env.step expects actions array of length (num_active_agents)
-        active_indices = [i for i in range(self.num_flights) if i not in self._env.done]
-        env_actions = np.zeros((len(active_indices), 2), dtype=np.float32)
-        for idx, agent_num in enumerate(active_indices):
-            env_actions[idx] = self.current_actions[agent_num]
-
         # Step simulation ACTION_FREQUENCY times
         for step_i in range(ACTION_FREQUENCY):
+            # Build actions for the underlying env (only for *actually active* agents)
+            # Must rebuild every inner step because if an agent finishes, the active list shifts!
+            active_indices = [i for i in range(self.num_flights) if i not in self._env.done]
+            env_actions = np.zeros((len(active_indices), 2), dtype=np.float32)
+            for idx, agent_num in enumerate(active_indices):
+                env_actions[idx] = self.current_actions[agent_num]
+
             raw_obs_list, rewards, done_t, done_e, info = self._env.step(env_actions)
             
             # Map rewards back to absolute indexing
             if len(rewards) > 0:
                 for idx, agent_num in enumerate(active_indices):
-                    # Sum up the rewards across the sub-steps
-                    self.accumulated_rewards[agent_num] += float(rewards[idx])
+                    self.accumulated_rewards[agent_num] += float(rewards[agent_num])
+
+            # Accumulate per-component rewards
+            components = self._env.reward_components()
+            for name in self._component_names:
+                for idx, agent_num in enumerate(active_indices):
+                    self._accumulated_components[name][agent_num] += float(components[name][agent_num])
 
             if done_t or done_e:
                 episode_terminated = done_e
                 episode_truncated = done_t
                 break
-                
-            # After first step, maintain heading (zero out turning action)
-            env_actions.fill(0.0)
 
 
         # Assign accumulated rewards to the buffer
         self.buf_rews[:] = self.accumulated_rewards
+
+        # Write per-component rewards into info dicts
+        for i in range(self.num_flights):
+            for name in self._component_names:
+                self.buf_infos[i][f"reward_{name}"] = float(self._accumulated_components[name][i])
 
         # Calculate who is still active AFTER the ACTION_FREQUENCY steps
         active_indices_now = [i for i in range(self.num_flights) if i not in self._env.done]

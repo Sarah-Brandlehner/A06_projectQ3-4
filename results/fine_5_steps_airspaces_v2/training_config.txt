@@ -1,0 +1,41 @@
+Training Configuration
+==================================================
+Date: 2026-03-26 09:12:35
+Run name: fine_5_steps_airspaces_v2
+
+--- Training Parameters ---
+Mode:            ALL AGENTS (Deploy-all)
+Timesteps:       1000000
+Num flights:     10
+Num envs:        8
+Algorithm:       SAC (MlpPolicy)
+Learning rate:   1e-3
+Buffer size:     100,000
+Batch size:      256
+Gamma:           0.99
+Tau:             0.005
+Train freq:      8
+Gradient steps:  8
+Entropy coeff:   auto
+
+--- Observation Normalization ---
+Intruder distance center: 50000.0 m
+Intruder distance scale:  15000.0 m
+Intruder position scale:  13000.0 m
+Target distance scale:    200000.0 m
+Speed center:             230.0 m/s
+Speed scale:              30.0 m/s
+Observation size:         38
+Action frequency:         5
+
+--- Reward Function ---
+  drifts     = self.drift_penalties() * 0.5                # tutor's weight (+0.2 since formula uses 0.5 - abs(drift))
+  conflicts  = self.conflict_penalties() * -40             # tutor's weight
+  alerts     = self.alert_penalties() * 0.0                # DISABLED: was overpowering the drift reward
+  target     = self.reachedTarget() * 1                 # tutor disables target reward completely
+  tot_reward = drifts + conflicts + alerts + target + restricted + heading_into_restricted
+  return tot_reward
+
+--- Heading / Speed Limits ---
+Max heading change:  22.5 deg per action
+Speed change:        (max_speed - min_speed) / 10 per action
