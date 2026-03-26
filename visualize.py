@@ -27,7 +27,7 @@ Commands:
 
     python visualize.py evaluate --run-dir results/4_intruders_unlocked_physics --no-random-heading
     python visualize.py evaluate --run-dir results/minimal_reward_ALL_AGENTS --no-random-heading --workers 8
-    python visualize.py evaluate --run-dir results/rel_vel_and_restricted_airspace_5_steps --no-random-heading --workers 8 --episodes 100
+    python visualize.py evaluate --run-dir results/fine_5_steps_airspaces --no-random-heading --workers 8 --episodes 100
     
     python visualize.py compare --run-dir results/minimal_reward_ALL_AGENTS --no-random-heading
 
