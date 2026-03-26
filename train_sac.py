@@ -7,9 +7,9 @@ heading + speed actions, 2 closest intruders in observation.
 # USE THE NUMBER OF CORES YOUR CPU HAS
 Usage:
     
-    python train_sac.py --timesteps 300000 --num-flights 10 --num-envs 8 --train-all --run-name "basic_policy"
+    python train_sac.py --timesteps 500000 --num-flights 10 --num-envs 8 --train-all --run-name "basic_policy"
 
-    python train_sac.py --timesteps 200000 --num-flights 10 --num-envs 8 --train-all --run-name "4_intruders_unlocked_physics_finetune" --load "results/4_intruders_unlocked_physics/best_model/best_model.zip"
+    python train_sac.py --timesteps 200000 --num-flights 10 --num-envs 8 --train-all --run-name "basic_policy_finetune" --load "results/basic_policy/best_model/best_model.zip"
 """
 import argparse
 import os
@@ -192,7 +192,7 @@ def train(args):
             args.load,
             env=train_env,
             custom_objects={
-                "learning_rate": 5e-5,
+                "learning_rate": 3e-5,
                 "buffer_size": 1_000_000, 
                 "batch_size": 1024,
                 "ent_coef": 0.05,
@@ -203,7 +203,7 @@ def train(args):
         model = SAC(
             "MlpPolicy",
             train_env,
-            learning_rate=3e-4,             # 1e-3
+            learning_rate=2e-4,             # 1e-3
             buffer_size=1_000_000,          # 100_000 (increased for multi-agent)
             batch_size=1024,                # 256 (increased for multi-agent)
             tau=0.005,                      # 0.005

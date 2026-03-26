@@ -12,10 +12,10 @@ from gymnasium import spaces
 from atcenv.env import Environment, NUMBER_INTRUDERS_STATE
 
 # Number of sim steps per RL action (reference uses 5-10)
-ACTION_FREQUENCY = 3
+ACTION_FREQUENCY = 5
 
 # Observation size: 5 * NUMBER_INTRUDERS_STATE + 16
-# (5 intruder state values + 5 ownship values + 2 restricted airspace flags + 12 closest vertex values)
+# Updated for 4 intruders (20) + 5 ownship + 2 flags + 3 for 1 restricted point = 30
 OBS_SIZE = 5 * NUMBER_INTRUDERS_STATE + 10
 
 # Normalization constants (matched to reference bluesky-gym ranges)

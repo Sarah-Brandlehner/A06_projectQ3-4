@@ -102,12 +102,12 @@ class Environment(gym.Env):
 
     def reward(self) -> List:
         # Tutor's hybrid drift reward + zero target reward
-        drifts     = self.drift_penalties() * 0.2                # tutor's weight (+0.2 since formula uses 0.5 - abs(drift))
-        conflicts  = self.conflict_penalties() * -10             # tutor's weight
-        restricted = self.restricted_airspace_penalties() * -1
-        heading_into_restricted = self.heading_into_restricted_penalties() * -0.0025
+        drifts     = self.drift_penalties() * 0.5                # tutor's weight (+0.2 since formula uses 0.5 - abs(drift))
+        conflicts  = self.conflict_penalties() * -15             # tutor's weight
+        restricted = self.restricted_airspace_penalties() * -5
+        heading_into_restricted = self.heading_into_restricted_penalties() * -0.025
         alerts     = self.alert_penalties() * 0.0                # DISABLED: was overpowering the drift reward
-        target     = self.reachedTarget() * 0.0                  # tutor disables target reward completely
+        target     = self.reachedTarget() * 10                  # tutor disables target reward completely
         
         # proximity  = self.proximity_penalties() * -2.0         # disabled
         # what kinda worked was -0.5 for drift (should be higher tho), -6 for conflict, -4 for restricted, -0.25 for heading, 10 for target
@@ -438,7 +438,7 @@ class Environment(gym.Env):
         done_t = (self.i == self.max_episode_len) 
         done_e = (len(self.done) == self.num_flights)
 
-        self.render() # comment out for training    
+        # self.render() # comment out for training    
 
         return obs, rew, done_t, done_e, {}
 
