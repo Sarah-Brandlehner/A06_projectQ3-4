@@ -1,6 +1,6 @@
 Training Configuration
 ==================================================
-Date: 2026-03-26 09:12:35
+Date: 2026-03-26 10:17:29
 Run name: fine_5_steps_airspaces_v2
 
 --- Training Parameters ---
@@ -29,10 +29,10 @@ Observation size:         38
 Action frequency:         5
 
 --- Reward Function ---
-  drifts     = self.drift_penalties() * 0.5                # tutor's weight (+0.2 since formula uses 0.5 - abs(drift))
+  drifts     = self.drift_penalties() * 1               # tutor's weight (+0.2 since formula uses 0.5 - abs(drift))
   conflicts  = self.conflict_penalties() * -40             # tutor's weight
   alerts     = self.alert_penalties() * 0.0                # DISABLED: was overpowering the drift reward
-  target     = self.reachedTarget() * 1                 # tutor disables target reward completely
+  target     = self.reachedTarget() * 0.0                 # tutor disables target reward completely
   tot_reward = drifts + conflicts + alerts + target + restricted + heading_into_restricted
   return tot_reward
 

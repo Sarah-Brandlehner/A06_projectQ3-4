@@ -273,25 +273,20 @@ class Flight:
         return (vertex_data + [(0.0, 0.0, 0.0)] * num_vertices)[:num_vertices]
 
     def closest_restricted_point(self, restricted_airspace: 'RestrictedAirspace'):
-        """
-        Get the distance and relative position to the closest point on the restricted airspace boundary
-        
-        :param restricted_airspace: RestrictedAirspace object
-        :return: (distance, relative_dx, relative_dy)
-        """
+        """Finds the single closest point on the restricted boundary and returns (dist, rel_dx, rel_dy) in heading-relative coords"""
         if restricted_airspace is None:
-            return 0.0, 0.0, 0.0
+            return (0.0, 0.0, 0.0)
         
-        point = Point(self.position.x, self.position.y)
-        poly = restricted_airspace.polygon
-        nearest = nearest_points(poly, point)
-        closest_point = nearest[0]  # point on polygon
+        # Find the point on the exterior linear ring closest to aircraft position
+        exterior = restricted_airspace.polygon.exterior
+        closest_p = exterior.interpolate(exterior.project(self.position))
         
-        dist = point.distance(closest_point)
-        r_dx = closest_point.x - self.position.x
-        r_dy = closest_point.y - self.position.y
+        dx, dy = closest_p.x - self.position.x, closest_p.y - self.position.y
+        dist = math.hypot(dx, dy)
         
-        return dist, r_dx, r_dy
+        # Rotate to heading-relative coordinates
+        rel_brg = math.atan2(dx, dy) - self.track
+        return (dist, dist * math.sin(rel_brg), dist * math.cos(rel_brg))
 
     @classmethod
     def random(cls, airspace: Airspace, min_speed: float, max_speed: float, tol: float = 0., random_init_heading: bool = True):
@@ -326,51 +321,4 @@ class Flight:
         airspeed = random.uniform(min_speed, max_speed)
 
         return cls(position, target, airspeed, random_init_heading=random_init_heading)
-    def in_restricted_airspace(self, restricted_airspace: 'RestrictedAirspace') -> bool:
-        """
-        Check if the aircraft is currently in the restricted airspace
-        
-        :param restricted_airspace: RestrictedAirspace object
-        :return: True if aircraft is in restricted airspace, False otherwise
-        """
-        if restricted_airspace is None:
-            return False
-        return restricted_airspace.polygon.contains(self.position)
-
-    def heading_into_restricted_airspace(self, restricted_airspace: 'RestrictedAirspace', lookahead: float = 50000.0) -> bool:
-        """
-        Check if the aircraft's current heading line intersects with the restricted airspace
-        
-        :param restricted_airspace: RestrictedAirspace object
-        :param lookahead: distance to look ahead along the current track (in meters), default 50km
-        :return: True if heading line intersects restricted airspace, False otherwise
-        """
-        if restricted_airspace is None:
-            return False
-        
-        # Create a line from current position extending in the direction of current track
-        dx = math.sin(self.track) * lookahead
-        dy = math.cos(self.track) * lookahead
-        
-        end_point = Point(self.position.x + dx, self.position.y + dy)
-        heading_line = LineString([self.position, end_point])
-        
-        # Check if the heading line intersects with the restricted airspace boundary
-        return heading_line.intersects(restricted_airspace.polygon)
-
-    def closest_restricted_point(self, restricted_airspace: 'RestrictedAirspace'):
-        """Finds the single closest point on the restricted boundary and returns (dist, rel_dx, rel_dy)"""
-        if restricted_airspace is None:
-            return (0.0, 0.0, 0.0)
-        
-        # Find the point on the exterior linear ring closest to aircraft position
-        exterior = restricted_airspace.polygon.exterior
-        closest_p = exterior.interpolate(exterior.project(self.position))
-        
-        dx, dy = closest_p.x - self.position.x, closest_p.y - self.position.y
-        dist = math.hypot(dx, dy)
-        
-        # Rotate to heading-relative coordinates
-        rel_brg = math.atan2(dx, dy) - self.track
-        return (dist, dist * math.sin(rel_brg), dist * math.cos(rel_brg))
 

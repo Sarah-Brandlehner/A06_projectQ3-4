@@ -12,7 +12,7 @@ from gymnasium import spaces
 from atcenv.env import Environment, NUMBER_INTRUDERS_STATE
 
 # Number of sim steps per RL action (reference uses 5-10)
-ACTION_FREQUENCY = 5
+ACTION_FREQUENCY = 3
 
 # Observation size: 7 * NUMBER_INTRUDERS_STATE + 10
 # (7 relative state vectors per intruder + 5 ownship values + 2 restricted airspace flags + 3 closest vertex values)
@@ -109,11 +109,12 @@ class ATCEnvWrapper(gym.Env):
         # Restricted airspace flags (already in 0 to 1) - indices 7*n+5, 7*n+6
         
         # Closest 1 point of restricted airspace (dist, dx, dy)
+        # Note: dx/dy are now heading-relative, so we normalize by distance
         point_start = 7*n + 7
         if point_start < len(obs):
             obs[point_start] = (obs[point_start] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
-            obs[point_start+1] = obs[point_start+1] / INTRUDER_POS_NORM
-            obs[point_start+2] = obs[point_start+2] / INTRUDER_POS_NORM
+            obs[point_start+1] /= INTRUDER_POS_NORM
+            obs[point_start+2] /= INTRUDER_POS_NORM
 
         return np.clip(obs, -1.0, 1.0).astype(np.float32)
 

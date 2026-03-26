@@ -76,7 +76,7 @@ class SharedPolicyVecEnv(vec_env.VecEnv):
         self.accumulated_rewards = np.zeros(self.num_flights, dtype=np.float32)
 
         # Per-component reward accumulators for tracking
-        self._component_names = ["drift", "conflict", "alert", "target"]
+        self._component_names = ["drift", "conflict", "alert", "target", "restricted", "heading_into_restricted"]
         self._accumulated_components = {
             name: np.zeros(self.num_flights, dtype=np.float32)
             for name in self._component_names
@@ -97,12 +97,17 @@ class SharedPolicyVecEnv(vec_env.VecEnv):
         obs[7*n]     = (obs[7*n] - 230.0) / 30.0
         obs[7*n+1]   = (obs[7*n+1] - 230.0) / 30.0
         obs[7*n+2]   = (obs[7*n+2] - TARGET_DIST_NORM * 0.5) / (TARGET_DIST_NORM * 0.5)
+        # sin/cos drift: already in [-1, 1]
         
+        # Restricted airspace flags (already in 0 to 1) - indices 7*n+5, 7*n+6
+        
+        # Closest 1 point of restricted airspace (dist, dx, dy)
+        # Note: dx/dy are now heading-relative, so we normalize by distance
         point_start = 7*n + 7
         if point_start < len(obs):
             obs[point_start] = (obs[point_start] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
-            obs[point_start+1] = obs[point_start+1] / INTRUDER_POS_NORM
-            obs[point_start+2] = obs[point_start+2] / INTRUDER_POS_NORM
+            obs[point_start+1] /= INTRUDER_POS_NORM
+            obs[point_start+2] /= INTRUDER_POS_NORM
 
         return np.clip(obs, -1.0, 1.0).astype(np.float32)
 
