@@ -101,26 +101,29 @@ class Environment(gym.Env):
         return None
 
     def reward(self) -> List:
-        drifts = self.drift_penalties() * 0.7
-        conflicts = self.conflict_penalties() * -10.0
+        drifts = self.drift_penalties() * 0.5
+        conflicts = self.conflict_penalties() * -30.0
         
         # New: Radial Approach Penalty
-        # Punishment = (Approach Velocity) / (Distance)
+        # Punishment = (Approach Velocity) / (fixed distance)
         # This creates a "shield" around the zone that gets stronger as you get closer/faster.
         restricted_penalties = np.zeros(self.num_flights)
         for i, f in enumerate(self.flights):
             if i not in self.done:
                 dist, _, _, approach = f.closest_restricted_point(self.restricted_airspace)
                 if f.in_restricted_airspace(self.restricted_airspace):
-                    restricted_penalties[i] -= 1.0 # Keep the hard penalty for being inside
+                    restricted_penalties[i] -= 10.0 # Penalty for being inside
+                    if approach > 0:
+                        # The faster they fly toward the exit, the less the penalty hurts.
+                        restricted_penalties[i] += (approach / self.max_speed) * 2.0
                 
-                # Only "nudge" them if they are within 3000m (approx 1.6 nm) 
+                # Only "nudge" them if they are within 5000m (approx 2.7 nm) 
                 # AND flying toward the boundary.
-                elif dist < 3000 and approach > 0: 
+                elif dist < 8000 and approach > 0: 
                     # This penalty is now extremely small (~0.01 per step at max speed)
                     # It acts only as a 'tie-breaker' to tell the AI which way to turn
                     # if it was already considering a move.
-                    restricted_penalties[i] -= (approach / 3000) * 0.1
+                    restricted_penalties[i] -= (approach / dist) * 0.05
 
         return drifts + conflicts + restricted_penalties
 
@@ -160,7 +163,8 @@ class Environment(gym.Env):
         drift = np.zeros(self.num_flights)
         for i, f in enumerate(self.flights):
             if i not in self.done:
-                drift[i] = 0.5 - abs(f.drift)   # tutor's formula: rewards on-track, penalizes off-track
+                #drift[i] = 0.5 - abs(f.drift)   # tutor's formula: rewards on-track, penalizes off-track
+                drift[i]  = 0.5 - (abs(f.drift)**1.5)
         return drift
     
     def restricted_airspace_penalties(self):
