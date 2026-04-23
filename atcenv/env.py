@@ -102,7 +102,7 @@ class Environment(gym.Env):
 
     def reward(self) -> List:
         drifts = self.drift_penalties() * 0.7
-        conflicts = self.conflict_penalties() * -20.0
+        conflicts = self.conflict_penalties() * -35.0
         
         # New: Radial Approach Penalty
         # Punishment = (Approach Velocity) / (fixed distance)
@@ -112,18 +112,18 @@ class Environment(gym.Env):
             if i not in self.done:
                 dist, _, _, approach = f.closest_restricted_point(self.restricted_airspace)
                 if f.in_restricted_airspace(self.restricted_airspace):
-                    restricted_penalties[i] -= 10.0 # Penalty for being inside
+                    restricted_penalties[i] -=15.0 # Penalty for being inside
                     if approach > 0:
                         # The faster they fly toward the exit, the less the penalty hurts.
                         restricted_penalties[i] += (approach / self.max_speed) * 3.0
                 
                 # Only "nudge" them if they are close
                 # AND flying toward the boundary.
-                elif dist < 8000 and approach > 0: 
+                # elif dist < 8000 and approach > 0: 
                     # This penalty is now extremely small (~0.01 per step at max speed)
                     # It acts only as a 'tie-breaker' to tell the AI which way to turn
                     # if it was already considering a move.
-                    restricted_penalties[i] -= (approach / dist) * 0.5
+                    # restricted_penalties[i] -= (approach / dist) * 0.5
 
         return drifts + conflicts + restricted_penalties
 
@@ -470,7 +470,7 @@ class Environment(gym.Env):
         
         while len(self.flights) < self.num_flights:
             valid = True
-            candidate = Flight.random(self.airspace, self.min_speed, self.max_speed, tol, random_init_heading=self.random_init_heading)
+            candidate = Flight.random(self.airspace, self.min_speed, self.max_speed, tol, random_init_heading=self.random_init_heading, restricted_airspace=self.restricted_airspace)
             for f in self.flights:
                 # Replaced shapely distance with math.hypot for fast reset
                 if math.hypot(candidate.position.x - f.position.x, candidate.position.y - f.position.y) < min_distance:

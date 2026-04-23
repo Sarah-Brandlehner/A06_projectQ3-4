@@ -13,9 +13,9 @@ Commands:
     To run the visualization in a specific run directory, use the --run-dir argument:
 
     python visualize.py compare --run-dir results/test_03drift_40conflict
-    python visualize.py evaluate --run-dir results/1.5drift_finetune1 --workers 8
+    python visualize.py evaluate --run-dir results/bigger_network_finetune1 --workers 8 --episodes 500
     python visualize.py training --run-dir results/expanded_obs_matrix_4
-    python visualize.py trajectory --run-dir results/1.5drift_finetune1
+    python visualize.py trajectory --run-dir results/bigger_network_finetune1
     python visualize.py compare --run-dir results/alert_shared_reward_ALL_AGENTS
     python visualize.py evaluate --run-dir results/minimal_reward_ALL_AGENTS
     python visualize.py training --run-dir results/test_03drift_40conflict

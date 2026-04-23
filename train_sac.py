@@ -7,9 +7,9 @@ heading + speed actions, 2 closest intruders in observation.
 # USE THE NUMBER OF CORES YOUR CPU HAS
 Usage:
     
-    python train_sac.py --timesteps 4000000 --num-flights 10 --num-envs 16 --train-all --run-name "bigger_network"
+    python train_sac.py --timesteps 1000000 --num-flights 10 --num-envs 16 --train-all --run-name "no_bubble"
 
-    python train_sac.py --timesteps 4000000 --num-flights 10 --num-envs 16 --train-all --run-name "1.5drift_finetune1" --load "results/1.5drift_finetune1/best_model/best_model.zip"
+    python train_sac.py --timesteps 1000000 --num-flights 10 --num-envs 16 --train-all --run-name "no_bubble" --load "results/no_bubble/best_model/best_model.zip"
 """
 import argparse
 import os

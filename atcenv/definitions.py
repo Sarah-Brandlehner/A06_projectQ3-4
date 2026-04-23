@@ -291,7 +291,7 @@ class Flight:
         return dist, s_brg, c_brg, approach
 
     @classmethod
-    def random(cls, airspace: Airspace, min_speed: float, max_speed: float, tol: float = 0., random_init_heading: bool = True):
+    def random(cls, airspace: Airspace, min_speed: float, max_speed: float, tol: float = 0., random_init_heading: bool = True, restricted_airspace: Optional['RestrictedAirspace'] = None):
         """
         Creates a random flight
 
@@ -299,6 +299,8 @@ class Flight:
         :param max_speed: maximum speed of the flights (in kt)
         :param min_speed: minimum speed of the flights (in kt)
         :param tol: tolerance to consider that the target has been reached (in meters)
+        :param random_init_heading: whether to use random initial heading
+        :param restricted_airspace: optional RestrictedAirspace to avoid spawning in
         :return: random flight
         """
         def random_point_in_polygon(polygon: Polygon) -> Point:
@@ -308,8 +310,10 @@ class Flight:
                 if polygon.contains(point):
                     return point
 
-        # random position
+        # random position - avoid restricted airspace if provided
         position = random_point_in_polygon(airspace.polygon)
+        while restricted_airspace is not None and restricted_airspace.polygon.contains(position):
+            position = random_point_in_polygon(airspace.polygon)
 
         # random target
         boundary = airspace.polygon.boundary
