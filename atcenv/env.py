@@ -118,7 +118,6 @@ class Environment(gym.Env):
                     # Using a 0.1 multiplier makes this a minor "nudge" 
                     # that won't overpower the drift/target rewards
                     restricted_penalties[i] -= (approach / max(dist, 500)) * 0.1
-
         return drifts + conflicts + restricted_penalties
 
     def reward_components(self):
