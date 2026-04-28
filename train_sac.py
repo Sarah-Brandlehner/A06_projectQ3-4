@@ -201,10 +201,12 @@ def train(args):
             }
         )
         model.tensorboard_log = f"{run_dir}/tensorboard/"
-    else:
+        policy_kwargs = dict(net_arch=[512, 512, 512]) # Default in SB3 is [256, 256]
+
         model = SAC(
             "MlpPolicy",
             train_env,
+            policy_kwargs=policy_kwargs,
             learning_rate=1e-4,             # 1e-3
             buffer_size=1_000_000,          # 100_000 (increased for multi-agent)
             batch_size=1024,                # 256 (increased for multi-agent)
