@@ -52,6 +52,7 @@ class Environment(gym.Env):
                  min_distance: Optional[float] = 5.,
                  distance_init_buffer: Optional[float] = 5.,
                  random_init_heading: bool = True,
+                 restricted_scale_factor: Optional[float] = None,
                  **kwargs):
         """
         Initialises the environment
@@ -65,6 +66,7 @@ class Environment(gym.Env):
         self.max_episode_len = max_episode_len
         self.distance_init_buffer = distance_init_buffer
         self.random_init_heading = random_init_heading
+        self.restricted_scale_factor = restricted_scale_factor
         self.dt = dt
 
         # tolerance to consider that the target has been reached (in meters)
@@ -462,7 +464,10 @@ class Environment(gym.Env):
 
     def reset(self, number_flights_training) -> List:
         self.airspace = Airspace.random(self.min_area, self.max_area)
-        self.restricted_airspace = RestrictedAirspace.random(self.min_area, self.max_area)
+        if self.restricted_scale_factor is not None:
+            self.restricted_airspace = RestrictedAirspace.random(self.min_area, self.max_area, scale_factor=self.restricted_scale_factor)
+        else:
+            self.restricted_airspace = RestrictedAirspace.random(self.min_area, self.max_area)
         self.num_flights = number_flights_training
         self.flights = []
         tol = self.distance_init_buffer * self.tol

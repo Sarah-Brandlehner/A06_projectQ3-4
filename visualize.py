@@ -9,6 +9,11 @@ Commands:
     python visualize.py trajectory        # Plot aircraft trajectories for one episode
     python visualize.py evaluate          # Run evaluation and plot metrics
     python visualize.py compare           # Compare multiple checkpoints
+
+    Parameter sweeps (output: results/sweeps/<run-name>_<mode>.png):
+    python visualize.py restricted_airspace_size --run-dir results/<run> --start 0.1 --end 0.6 --step 0.1 --episodes 30 --workers 8 --num-flights 10
+    python visualize.py uncertainties --run-dir results/<run> --episodes 30 --workers 8 --num-flights 10
+    python visualize.py aircraft_num --run-dir results/<run> --start 2 --end 11 --step 1 --episodes 30 --workers 8
  
     To run the visualization in a specific run directory, use the --run-dir argument:
 
@@ -466,6 +471,279 @@ def plot_evaluation(model_path, n_episodes=30, num_flights=5,
     plt.show()
 
 
+# ────────────────────────── PARAMETER SWEEPS ──────────────────────────
+
+def _eval_sweep_worker(model_path, episode_indices, num_flights, deploy_all,
+                       random_heading, restricted_scale_factor, uncertainty_flags):
+    """Worker that runs episodes under specific environment overrides.
+
+    uncertainty_flags is a dict like {"wind": bool, "delay": bool, "position": bool};
+    None means "leave module defaults alone".
+    """
+    import atcenv.env as _env_mod
+    if uncertainty_flags is not None:
+        _env_mod.ENABLE_WIND = bool(uncertainty_flags.get("wind", False))
+        _env_mod.ENABLE_DELAY = bool(uncertainty_flags.get("delay", False))
+        _env_mod.ENABLE_POSITION_UNCERTAINTY = bool(uncertainty_flags.get("position", False))
+
+    model = SAC.load(model_path)
+    env = Environment(num_flights=num_flights, random_init_heading=random_heading,
+                      restricted_scale_factor=restricted_scale_factor)
+
+    local_metrics = {
+        "conflicts": [],
+        "targets_reached": [],
+        "episode_length": [],
+        "total_drift": [],
+        "restricted_intrusions": [],
+    }
+
+    for ep in episode_indices:
+        raw_obs_list = env.reset(num_flights)
+        done = False
+        ep_conflicts = 0
+        ep_drift = 0.0
+        ep_restricted_intrusions = 0
+        step = 0
+
+        while not done:
+            current_actions = {}
+            if deploy_all:
+                agent_idx = 0
+                for i in range(num_flights):
+                    if i not in env.done:
+                        obs = normalize_obs(raw_obs_list[agent_idx])
+                        action, _ = model.predict(obs, deterministic=True)
+                        current_actions[i] = action
+                        agent_idx += 1
+
+            for _ in range(ACTION_FREQUENCY):
+                active_indices = [i for i in range(num_flights) if i not in env.done]
+                actions = np.zeros((len(active_indices), 2), dtype=np.float32)
+                for idx, agent_num in enumerate(active_indices):
+                    actions[idx] = current_actions.get(agent_num, np.array([0.0, 0.0], dtype=np.float32))
+
+                raw_obs_list, rewards, done_t, done_e, info = env.step(actions)
+                if done_t or done_e:
+                    done = True
+                    break
+
+            ep_conflicts += len(env.conflicts)
+            ep_restricted_intrusions += len(env.restricted_airspace_intrusions)
+            for i, f in enumerate(env.flights):
+                if i not in env.done:
+                    ep_drift += abs(f.drift)
+            step += 1
+
+        local_metrics["conflicts"].append(ep_conflicts)
+        local_metrics["targets_reached"].append(len(env.done))
+        local_metrics["episode_length"].append(step)
+        local_metrics["total_drift"].append(ep_drift)
+        local_metrics["restricted_intrusions"].append(ep_restricted_intrusions)
+
+    env.close()
+    return local_metrics
+
+
+def _run_sweep_point(model_path, n_episodes, num_flights, workers,
+                     random_heading, restricted_scale_factor, uncertainty_flags):
+    """Run n_episodes for one sweep point and return aggregated metrics."""
+    if workers <= 1:
+        return _eval_sweep_worker(model_path, list(range(n_episodes)), num_flights,
+                                  True, random_heading, restricted_scale_factor, uncertainty_flags)
+
+    episode_batches = [[] for _ in range(workers)]
+    for ep in range(n_episodes):
+        episode_batches[ep % workers].append(ep)
+    episode_batches = [b for b in episode_batches if b]
+
+    metrics = {
+        "conflicts": [],
+        "targets_reached": [],
+        "episode_length": [],
+        "total_drift": [],
+        "restricted_intrusions": [],
+    }
+    with ProcessPoolExecutor(max_workers=len(episode_batches)) as executor:
+        futures = [
+            executor.submit(_eval_sweep_worker, model_path, batch, num_flights,
+                            True, random_heading, restricted_scale_factor, uncertainty_flags)
+            for batch in episode_batches
+        ]
+        for future in futures:
+            result = future.result()
+            for key in metrics:
+                metrics[key].extend(result[key])
+    return metrics
+
+
+def _summarize(metrics, n_episodes):
+    """Compute the seven summary numbers per sweep point."""
+    conflicts = metrics["conflicts"]
+    intrusions = metrics["restricted_intrusions"]
+    conflict_free_pct = 100 * sum(1 for c in conflicts if c == 0) / n_episodes
+    intrusion_free_pct = 100 * sum(1 for r in intrusions if r == 0) / n_episodes
+    return {
+        "conflict_free_pct": conflict_free_pct,
+        "intrusion_free_pct": intrusion_free_pct,
+        "mean_targets": float(np.mean(metrics["targets_reached"])),
+        "mean_drift": float(np.mean(metrics["total_drift"])),
+        "mean_conflicts": float(np.mean(conflicts)),
+        "mean_intrusions": float(np.mean(intrusions)),
+    }
+
+
+def _plot_sweep_lines(x_values, summaries, x_label, title, save_path):
+    """Plot the 6 metric curves vs a numeric x-axis."""
+    cf = [s["conflict_free_pct"] for s in summaries]
+    intf = [s["intrusion_free_pct"] for s in summaries]
+    tr = [s["mean_targets"] for s in summaries]
+    dr = [s["mean_drift"] for s in summaries]
+    co = [s["mean_conflicts"] for s in summaries]
+    ints = [s["mean_intrusions"] for s in summaries]
+
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+
+    axes[0, 0].plot(x_values, cf, "o-", color="#2196F3", linewidth=2)
+    axes[0, 0].set_title("Conflict-Free Episodes (%)")
+    axes[0, 0].set_ylim(0, 105)
+
+    axes[0, 1].plot(x_values, intf, "o-", color="#9C27B0", linewidth=2)
+    axes[0, 1].set_title("Intrusion-Free Episodes (%)")
+    axes[0, 1].set_ylim(0, 105)
+
+    axes[0, 2].plot(x_values, tr, "o-", color="#4CAF50", linewidth=2)
+    axes[0, 2].set_title("Mean Targets Reached / Episode")
+
+    axes[1, 0].plot(x_values, dr, "o-", color="#FF9800", linewidth=2)
+    axes[1, 0].set_title("Mean Cumulative Drift / Episode")
+
+    axes[1, 1].plot(x_values, co, "o-", color="#F44336", linewidth=2)
+    axes[1, 1].set_title("Mean Conflicts / Episode")
+
+    axes[1, 2].plot(x_values, ints, "o-", color="#795548", linewidth=2)
+    axes[1, 2].set_title("Mean Intrusions / Episode")
+
+    for ax in axes.flat:
+        ax.set_xlabel(x_label)
+        ax.grid(True, alpha=0.3)
+
+    fig.suptitle(title, fontsize=14, fontweight="bold")
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    print(f"Saved sweep plot to {save_path}")
+    plt.show()
+
+
+def _plot_sweep_bars(x_labels, summaries, title, save_path):
+    """Bar-plot version for the uncertainties sweep."""
+    cf = [s["conflict_free_pct"] for s in summaries]
+    intf = [s["intrusion_free_pct"] for s in summaries]
+    tr = [s["mean_targets"] for s in summaries]
+    dr = [s["mean_drift"] for s in summaries]
+    co = [s["mean_conflicts"] for s in summaries]
+    ints = [s["mean_intrusions"] for s in summaries]
+
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    xs = np.arange(len(x_labels))
+
+    axes[0, 0].bar(xs, cf, color="#2196F3", alpha=0.8)
+    axes[0, 0].set_title("Conflict-Free Episodes (%)")
+    axes[0, 0].set_ylim(0, 105)
+
+    axes[0, 1].bar(xs, intf, color="#9C27B0", alpha=0.8)
+    axes[0, 1].set_title("Intrusion-Free Episodes (%)")
+    axes[0, 1].set_ylim(0, 105)
+
+    axes[0, 2].bar(xs, tr, color="#4CAF50", alpha=0.8)
+    axes[0, 2].set_title("Mean Targets Reached / Episode")
+
+    axes[1, 0].bar(xs, dr, color="#FF9800", alpha=0.8)
+    axes[1, 0].set_title("Mean Cumulative Drift / Episode")
+
+    axes[1, 1].bar(xs, co, color="#F44336", alpha=0.8)
+    axes[1, 1].set_title("Mean Conflicts / Episode")
+
+    axes[1, 2].bar(xs, ints, color="#795548", alpha=0.8)
+    axes[1, 2].set_title("Mean Intrusions / Episode")
+
+    for ax in axes.flat:
+        ax.set_xticks(xs)
+        ax.set_xticklabels(x_labels)
+        ax.set_xlabel("Uncertainty")
+        ax.grid(True, alpha=0.3, axis="y")
+
+    fig.suptitle(title, fontsize=14, fontweight="bold")
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    print(f"Saved sweep plot to {save_path}")
+    plt.show()
+
+
+def sweep_restricted_airspace_size(model_path, start, end, step, n_episodes,
+                                   num_flights, workers, random_heading, save_path):
+    sizes = list(np.arange(start, end, step))
+    if not sizes:
+        raise ValueError(f"Empty range: start={start}, end={end}, step={step}")
+    for s in sizes:
+        if not (0.0 < s < 1.0):
+            raise ValueError(f"restricted airspace scale_factor must be in (0, 1); got {s}")
+    summaries = []
+    for s in sizes:
+        print(f"[restricted_airspace_size] scale_factor={s:.3f} | {n_episodes} eps × {workers} workers")
+        m = _run_sweep_point(model_path, n_episodes, num_flights, workers,
+                             random_heading, restricted_scale_factor=float(s),
+                             uncertainty_flags=None)
+        summaries.append(_summarize(m, n_episodes))
+    _plot_sweep_lines(sizes, summaries, "Restricted Airspace Scale Factor",
+                      f"Restricted Airspace Size Sweep ({n_episodes} episodes / point)",
+                      save_path)
+
+
+def sweep_uncertainties(model_path, n_episodes, num_flights, workers,
+                        random_heading, save_path):
+    configs = [
+        ("none", {"wind": False, "delay": False, "position": False}),
+        ("position", {"wind": False, "delay": False, "position": True}),
+        ("wind", {"wind": True, "delay": False, "position": False}),
+        ("delay", {"wind": False, "delay": True, "position": False}),
+    ]
+    summaries = []
+    labels = []
+    for label, flags in configs:
+        print(f"[uncertainties] {label} | {n_episodes} eps × {workers} workers")
+        m = _run_sweep_point(model_path, n_episodes, num_flights, workers,
+                             random_heading, restricted_scale_factor=None,
+                             uncertainty_flags=flags)
+        summaries.append(_summarize(m, n_episodes))
+        labels.append(label)
+    _plot_sweep_bars(labels, summaries,
+                     f"Uncertainty Sweep ({n_episodes} episodes / point)",
+                     save_path)
+
+
+def sweep_aircraft_num(model_path, start, end, step, n_episodes, workers,
+                       random_heading, save_path):
+    counts = list(range(int(start), int(end), int(step)))
+    if not counts:
+        raise ValueError(f"Empty range: start={start}, end={end}, step={step}")
+    for c in counts:
+        if c < 1:
+            raise ValueError(f"aircraft count must be >= 1; got {c}")
+    summaries = []
+    for c in counts:
+        print(f"[aircraft_num] num_flights={c} | {n_episodes} eps × {workers} workers")
+        m = _run_sweep_point(model_path, n_episodes, num_flights=c, workers=workers,
+                             random_heading=random_heading, restricted_scale_factor=None,
+                             uncertainty_flags=None)
+        summaries.append(_summarize(m, n_episodes))
+    _plot_sweep_lines(counts, summaries, "Number of Aircraft",
+                     f"Aircraft Count Sweep ({n_episodes} episodes / point)",
+                     save_path)
+
+
 # ────────────────────────── CHECKPOINT COMPARISON ──────────────────────────
 
 def _eval_checkpoint_worker(ckpt_path, step_num, n_episodes, num_flights):
@@ -562,7 +840,9 @@ def compare_checkpoints(checkpoint_dir="results/checkpoints/",
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ATC Model Visualization Tools")
-    parser.add_argument("command", choices=["training", "trajectory", "evaluate", "compare"],
+    parser.add_argument("command",
+                        choices=["training", "trajectory", "evaluate", "compare",
+                                 "restricted_airspace_size", "uncertainties", "aircraft_num"],
                         help="Which visualization to run")
     parser.add_argument("--run-dir", type=str, default="results",
                         help="The results directory to analyze (e.g., results/test_03drift_40conflict)")
@@ -572,8 +852,14 @@ if __name__ == "__main__":
     parser.add_argument("--num-flights", type=int, default=10)
     parser.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) // 2),
                         help="Number of parallel worker processes for evaluation")
-    parser.add_argument("--no-random-heading", action="store_true", 
+    parser.add_argument("--no-random-heading", action="store_true",
                         help="Evaluate on perfectly straight initial headings instead of randomized ones.")
+    parser.add_argument("--start", type=float, default=None,
+                        help="Sweep start (inclusive). Float for restricted_airspace_size, int for aircraft_num.")
+    parser.add_argument("--end", type=float, default=None,
+                        help="Sweep end (exclusive).")
+    parser.add_argument("--step", type=float, default=None,
+                        help="Sweep step.")
     args = parser.parse_args()
     
     random_heading_val = not args.no_random_heading
@@ -598,8 +884,37 @@ if __name__ == "__main__":
                         workers=args.workers, random_heading=random_heading_val)
 
     elif args.command == "compare":
-        compare_checkpoints(checkpoint_dir=checkpoint_dir, 
-                            n_episodes=args.episodes, 
+        compare_checkpoints(checkpoint_dir=checkpoint_dir,
+                            n_episodes=args.episodes,
                             num_flights=args.num_flights,
                             save_path=os.path.join(args.run_dir, "plots", "checkpoint_comparison.png"),
                             workers=args.workers)
+
+    elif args.command in ("restricted_airspace_size", "uncertainties", "aircraft_num"):
+        run_name = os.path.basename(os.path.normpath(args.run_dir))
+        sweeps_dir = os.path.join("results", "sweeps")
+        save_path = os.path.join(sweeps_dir, f"{run_name}_{args.command}.png")
+
+        if args.command == "restricted_airspace_size":
+            if args.start is None or args.end is None or args.step is None:
+                parser.error("restricted_airspace_size requires --start, --end, --step")
+            sweep_restricted_airspace_size(
+                model_path, start=args.start, end=args.end, step=args.step,
+                n_episodes=args.episodes, num_flights=args.num_flights,
+                workers=args.workers, random_heading=random_heading_val,
+                save_path=save_path,
+            )
+        elif args.command == "uncertainties":
+            sweep_uncertainties(
+                model_path, n_episodes=args.episodes, num_flights=args.num_flights,
+                workers=args.workers, random_heading=random_heading_val,
+                save_path=save_path,
+            )
+        elif args.command == "aircraft_num":
+            if args.start is None or args.end is None or args.step is None:
+                parser.error("aircraft_num requires --start, --end, --step")
+            sweep_aircraft_num(
+                model_path, start=int(args.start), end=int(args.end), step=int(args.step),
+                n_episodes=args.episodes, workers=args.workers,
+                random_heading=random_heading_val, save_path=save_path,
+            )
