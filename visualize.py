@@ -17,6 +17,10 @@ Commands:
     python visualize.py training --run-dir results/expanded_obs_matrix_4
     python visualize.py trajectory --run-dir results/bigger_network_finetune1
     python visualize.py compare --run-dir results/alert_shared_reward_ALL_AGENTS
+    python visualize.py evaluate --run-dir results/fine_5_steps_airspaces_v4_bigger_network --episodes 100 --workers 6
+    python visualize.py training --run-dir results/expanded_obs_matrix_4
+    python visualize.py trajectory --run-dir results/fine_5_steps_airspaces_v4
+    python visualize.py compare --run-dir results/fine_5_steps_airspaces_v3
     python visualize.py evaluate --run-dir results/minimal_reward_ALL_AGENTS
     python visualize.py training --run-dir results/test_03drift_40conflict
     python visualize.py trajectory --run-dir results/minimal_reward_ALL_AGENTS
@@ -24,10 +28,11 @@ Commands:
     python visualize.py compare --run-dir results/05drift_06conflict_01target_02proximity_ALL_AGENTS --workers 8
     python visualize.py training --run-dir results/<run> --workers 8
     python visualize.py trajectory --run-dir results/basic_policy --workers 8
+    python visualize.py trajectory --run-dir results/rel_velocity_obs --workers 8
 
     python visualize.py evaluate --run-dir results/4_intruders_unlocked_physics --no-random-heading
     python visualize.py evaluate --run-dir results/minimal_reward_ALL_AGENTS --no-random-heading --workers 8
-    python visualize.py evaluate --run-dir results/minimal_reward_ALL_AGENTS --no-random-heading --workers 8 --episodes 100
+    python visualize.py evaluate --run-dir results/fine_5_steps_airspaces --no-random-heading --workers 8 --episodes 100
     
     python visualize.py compare --run-dir results/minimal_reward_ALL_AGENTS --no-random-heading
 
@@ -50,6 +55,7 @@ from atcenv.sb3_wrapper import ATCEnvWrapper, ACTION_FREQUENCY
 INTRUDER_DIST_NORM = 50000.0
 INTRUDER_POS_NORM = 13000.0
 TARGET_DIST_NORM = 200000.0
+SPEED_NORM = 300.0
 
 
 def normalize_obs(raw_obs):
@@ -61,12 +67,14 @@ def normalize_obs(raw_obs):
     obs[2*n:3*n] = obs[2*n:3*n] / INTRUDER_POS_NORM
     obs[3*n:4*n] = obs[3*n:4*n] / INTRUDER_POS_NORM
     obs[4*n:5*n] = obs[4*n:5*n] / np.pi
-    obs[5*n]     = (obs[5*n] - 230.0) / 30.0
-    obs[5*n+1]   = (obs[5*n+1] - 230.0) / 30.0
-    obs[5*n+2]   = (obs[5*n+2] - TARGET_DIST_NORM * 0.5) / (TARGET_DIST_NORM * 0.5)
+    obs[5*n:6*n] = obs[5*n:6*n] / SPEED_NORM
+    obs[6*n:7*n] = obs[6*n:7*n] / SPEED_NORM
+    obs[7*n]     = (obs[7*n] - 230.0) / 30.0
+    obs[7*n+1]   = (obs[7*n+1] - 230.0) / 30.0
+    obs[7*n+2]   = (obs[7*n+2] - TARGET_DIST_NORM * 0.5) / (TARGET_DIST_NORM * 0.5)
     
     # Restricted airspace flags (already in [0, 1] range)
-    # obs[5*n+3] and obs[5*n+4] - no normalization needed
+    # obs[7*n+5] and obs[7*n+6] - no normalization needed
     
    # Ownship: 5n to 5n+4
     # Restricted Block: 5n+5 to 5n+9
@@ -284,6 +292,7 @@ def _eval_episodes_worker(model_path, episode_indices, num_flights, deploy_all, 
 
     local_metrics = {
         "conflicts": [],
+        "restricted_intrusions": [],
         "targets_reached": [],
         "episode_length": [],
         "total_drift": [],
@@ -294,6 +303,7 @@ def _eval_episodes_worker(model_path, episode_indices, num_flights, deploy_all, 
         raw_obs_list = env.reset(num_flights)
         done = False
         ep_conflicts = 0
+        ep_restricted_intrusions = 0
         ep_drift = 0.0
         ep_restricted_intrusions = 0
         step = 0
@@ -328,6 +338,7 @@ def _eval_episodes_worker(model_path, episode_indices, num_flights, deploy_all, 
             step += 1
 
         local_metrics["conflicts"].append(ep_conflicts)
+        local_metrics["restricted_intrusions"].append(ep_restricted_intrusions)
         local_metrics["targets_reached"].append(len(env.done))
         local_metrics["episode_length"].append(step)
         local_metrics["total_drift"].append(ep_drift)
@@ -352,6 +363,7 @@ def run_evaluation(model_path, n_episodes=30, num_flights=5, deploy_all=True, wo
 
     metrics = {
         "conflicts": [],
+        "restricted_intrusions": [],
         "targets_reached": [],
         "episode_length": [],
         "total_drift": [],
@@ -404,6 +416,16 @@ def plot_evaluation(model_path, n_episodes=30, num_flights=5,
     ax.set_ylim(0, num_flights + 1)
     ax.legend()
 
+    # Restricted Intrusions per episode
+    ax = axes[0, 2]
+    ax.bar(range(len(metrics["restricted_intrusions"])), metrics["restricted_intrusions"], color="#8E24AA", alpha=0.7)
+    ax.axhline(np.mean(metrics["restricted_intrusions"]), color="black", linestyle="--",
+               label=f"Mean: {np.mean(metrics['restricted_intrusions']):.2f}")
+    ax.set_xlabel("Episode")
+    ax.set_ylabel("Intrusions")
+    ax.set_title("Restricted Area Violations")
+    ax.legend()
+
     # Episode length distribution
     ax = axes[0, 2]
     ax.hist(metrics["episode_length"], bins=20, color="#2196F3", alpha=0.7, edgecolor="black")
@@ -420,6 +442,9 @@ def plot_evaluation(model_path, n_episodes=30, num_flights=5,
     ax.set_ylabel("Total Drift (rad)")
     ax.set_title("Cumulative Drift per Episode")
     ax.legend()
+    
+    # Hide the unused 6th subplot
+    axes[1, 2].axis('off')
 
     # Restricted airspace intrusions per episode
     ax = axes[1, 1]
@@ -470,12 +495,13 @@ def plot_evaluation(model_path, n_episodes=30, num_flights=5,
 
 def _eval_checkpoint_worker(ckpt_path, step_num, n_episodes, num_flights):
     """Worker to evaluate a single checkpoint (used by ProcessPoolExecutor)."""
-    metrics = _eval_episodes_worker(ckpt_path, list(range(n_episodes)), num_flights, deploy_all=True)
+    metrics = _eval_episodes_worker(ckpt_path, list(range(n_episodes)), num_flights, deploy_all=True, random_heading=True)
     mean_c = np.mean(metrics["conflicts"])
+    mean_r = np.mean(metrics["restricted_intrusions"])
     mean_t = np.mean(metrics["targets_reached"])
     cf = sum(1 for c in metrics["conflicts"] if c == 0)
     cf_pct = 100 * cf / n_episodes
-    return step_num, mean_c, mean_t, cf_pct
+    return step_num, mean_c, mean_r, mean_t, cf_pct
 
 
 def compare_checkpoints(checkpoint_dir="results/checkpoints/",
@@ -489,6 +515,7 @@ def compare_checkpoints(checkpoint_dir="results/checkpoints/",
 
     steps = []
     mean_conflicts = []
+    mean_restricted = []
     mean_targets = []
     conflict_free_pct = []
 
@@ -501,6 +528,7 @@ def compare_checkpoints(checkpoint_dir="results/checkpoints/",
             metrics = _eval_episodes_worker(ckpt_path, list(range(n_episodes)), num_flights, deploy_all=True)
             steps.append(step_num)
             mean_conflicts.append(np.mean(metrics["conflicts"]))
+            mean_restricted.append(np.mean(metrics["restricted_intrusions"]))
             mean_targets.append(np.mean(metrics["targets_reached"]))
             cf = sum(1 for c in metrics["conflicts"] if c == 0)
             conflict_free_pct.append(100 * cf / n_episodes)
@@ -513,19 +541,21 @@ def compare_checkpoints(checkpoint_dir="results/checkpoints/",
                 step_num = int(ckpt.split("_")[-2])
                 futures.append(executor.submit(_eval_checkpoint_worker, ckpt_path, step_num, n_episodes, num_flights))
             for future in futures:
-                step_num, mc, mt, cfp = future.result()
+                step_num, mc, mr, mt, cfp = future.result()
                 steps.append(step_num)
                 mean_conflicts.append(mc)
+                mean_restricted.append(mr)
                 mean_targets.append(mt)
                 conflict_free_pct.append(cfp)
         # Sort by step number since parallel results may arrive out of order
         order = np.argsort(steps)
         steps = [steps[i] for i in order]
         mean_conflicts = [mean_conflicts[i] for i in order]
+        mean_restricted = [mean_restricted[i] for i in order]
         mean_targets = [mean_targets[i] for i in order]
         conflict_free_pct = [conflict_free_pct[i] for i in order]
 
-    fig, axes = plt.subplots(1, 3, figsize=(18, 5))
+    fig, axes = plt.subplots(1, 4, figsize=(24, 5))
 
     ax = axes[0]
     ax.plot(steps, mean_conflicts, "o-", color="#F44336", linewidth=2, markersize=6)
@@ -533,8 +563,15 @@ def compare_checkpoints(checkpoint_dir="results/checkpoints/",
     ax.set_ylabel("Mean Conflicts / Episode")
     ax.set_title("Conflict Rate vs Training")
     ax.grid(True, alpha=0.3)
-
+    
     ax = axes[1]
+    ax.plot(steps, mean_restricted, "o-", color="#8E24AA", linewidth=2, markersize=6)
+    ax.set_xlabel("Training Steps")
+    ax.set_ylabel("Restricted Intrusions / Ep")
+    ax.set_title("Restricted Area Violations vs Training")
+    ax.grid(True, alpha=0.3)
+
+    ax = axes[2]
     ax.plot(steps, mean_targets, "o-", color="#4CAF50", linewidth=2, markersize=6)
     ax.axhline(num_flights, color="black", linestyle="--", alpha=0.5)
     ax.set_xlabel("Training Steps")
@@ -543,7 +580,7 @@ def compare_checkpoints(checkpoint_dir="results/checkpoints/",
     ax.set_ylim(0, num_flights + 1)
     ax.grid(True, alpha=0.3)
 
-    ax = axes[2]
+    ax = axes[3]
     ax.plot(steps, conflict_free_pct, "o-", color="#2196F3", linewidth=2, markersize=6)
     ax.set_xlabel("Training Steps")
     ax.set_ylabel("Conflict-Free Episodes (%)")

@@ -359,6 +359,47 @@ class Flight:
         # Check if the heading line intersects with the restricted airspace boundary
         return heading_line.intersects(restricted_airspace.polygon)
 
+    def heading_into_restricted_airspace_gradient(self, restricted_airspace: 'RestrictedAirspace') -> float:
+        """
+        Returns a gradient value (0-1) representing how directly the aircraft is heading into the restricted airspace.
+        
+        0 = not heading into restricted airspace
+        0-1 = gradient based on angle between current bearing and direction to closest restricted point
+        1 = directly heading toward the closest restricted point
+        
+        :param restricted_airspace: RestrictedAirspace object
+        :return: gradient value from 0 to 1
+        """
+        if restricted_airspace is None:
+            return 0.0
+        
+        # Get the closest point on the boundary
+        exterior = restricted_airspace.polygon.exterior
+        closest_p = exterior.interpolate(exterior.project(self.position))
+        
+        # Calculate bearing to closest point
+        dx = closest_p.x - self.position.x
+        dy = closest_p.y - self.position.y
+        bearing_to_closest = math.atan2(dx, dy)
+        
+        # Calculate angle difference (normalize to 0-π)
+        angle_diff = abs(bearing_to_closest - self.track)
+        
+        # Normalize angle to 0-π range (shortest angular distance)
+        while angle_diff > math.pi:
+            angle_diff = 2 * math.pi - angle_diff
+        
+        # If angle difference > π/2, we're not heading toward the restricted airspace
+        if angle_diff > math.pi / 2:
+            return 0.0
+        
+        # Map angle_diff from 0 to π/2 into gradient 1 to 0
+        # Small angle = directly heading toward = high gradient (close to 1)
+        # Large angle (up to π/2) = not heading directly toward = low gradient (close to 0)
+        gradient = 1.0 - (angle_diff / (math.pi / 2))
+        
+        return gradient
+
     def closest_restricted_point(self, restricted_airspace: 'RestrictedAirspace'):
         """Finds the single closest point on the restricted boundary and returns (dist, sin_brg, cos_brg, approach_rate)"""
         if restricted_airspace is None:

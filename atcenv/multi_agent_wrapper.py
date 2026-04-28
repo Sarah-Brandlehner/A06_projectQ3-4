@@ -17,7 +17,7 @@ from gymnasium import spaces
 from atcenv.env import Environment, NUMBER_INTRUDERS_STATE
 from atcenv.sb3_wrapper import (
     ACTION_FREQUENCY, OBS_SIZE,
-    INTRUDER_DIST_NORM, INTRUDER_POS_NORM, TARGET_DIST_NORM
+    INTRUDER_DIST_NORM, INTRUDER_POS_NORM, TARGET_DIST_NORM, SPEED_NORM
 )
 
 

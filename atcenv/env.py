@@ -130,10 +130,13 @@ class Environment(gym.Env):
     def reward_components(self):
         """Return per-flight arrays for each weighted reward component."""
         return {
-            "drift":     self.drift_penalties() * 0.2,
+            "drift":     self.drift_penalties() * 0.5,
             "conflict":  self.conflict_penalties() * -40,
             "alert":     self.alert_penalties() * 0.0,
-            "target":    self.reachedTarget() * 0.0,
+            "target":    self.reachedTarget() * 1,
+            "restricted": self.restricted_airspace_penalties() * (-10), #-10
+            "heading_into_restricted": self.heading_into_restricted_penalties() * (-0.1), #-0.05
+            "exiting_restricted": self.exiting_restricted_airspace_reward() * 2.0,
         }
 
     def reachedTarget(self):
@@ -186,6 +189,31 @@ class Environment(gym.Env):
             if i not in self.done and self.restricted_airspace and f.heading_into_restricted_airspace(self.restricted_airspace):
                 penalties[i] = 1
         return penalties
+
+    def exiting_restricted_airspace_reward(self):
+        """
+        Reward aircraft for exiting the restricted airspace quickly.
+        Provides positive reward to incentivize fast exit and minimize time in restricted zone.
+        """
+        rewards = np.zeros(self.num_flights)
+        for i in range(self.num_flights):
+            if i not in self.done:
+                # Check if aircraft was in restricted airspace last step
+                if not hasattr(self, 'prev_restricted_status'):
+                    self.prev_restricted_status = {}
+                
+                was_in_restricted = self.prev_restricted_status.get(i, False)
+                is_in_restricted = (self.restricted_airspace and 
+                                   self.flights[i].in_restricted_airspace(self.restricted_airspace))
+                
+                # Reward for successfully exiting
+                if was_in_restricted and not is_in_restricted:
+                    rewards[i] = 1.0  # Reward for exiting
+                
+                # Update status for next step
+                self.prev_restricted_status[i] = is_in_restricted
+        
+        return rewards
 
     def alert_penalties(self):
         """Penalty for predicted conflicts within 2 minutes (paper Eq. 22, wa=5).
@@ -273,9 +301,9 @@ class Environment(gym.Env):
     def observation(self) -> List:
         """
         Returns the observation of each agent using fast NumPy vectorization.
-        Layout (5*N + 19): cur_dis, pred_dis, dx, dy, trackdif, airspeed,
-        optimal_airspeed, target_dist, sin(drift), cos(drift), in_restricted, heading_into_restricted,
-        + 1 closest restricted point (distance, dx, dy for each)
+        Layout (7*N + 10): cur_dis, pred_dis, dx, dy, trackdif, rel_vx, rel_vy,
+        airspeed, optimal_airspeed, target_dist, sin(drift), cos(drift),
+        in_restricted, heading_into_restricted, closest_restricted_point (distance, dx, dy)
         """
         if self.num_flights == 0:
             return []
@@ -286,6 +314,11 @@ class Environment(gym.Env):
         pred_x = np.array([f.prediction.x for f in self.flights])
         pred_y = np.array([f.prediction.y for f in self.flights])
         tracks = np.array([f.track for f in self.flights])
+        airspeeds = np.array([f.airspeed for f in self.flights])
+
+        # Velocity components per flight
+        vx = airspeeds * np.sin(tracks)
+        vy = airspeeds * np.cos(tracks)
 
         # Distance matrices
         dx = pos_x[np.newaxis, :] - pos_x[:, np.newaxis]
@@ -305,6 +338,10 @@ class Environment(gym.Env):
 
         # Track differences
         trackdif_all = tracks[:, np.newaxis] - tracks[np.newaxis, :]
+
+        # Relative velocity matrices (intruder velocity minus ownship velocity)
+        rel_vx_all = vx[np.newaxis, :] - vx[:, np.newaxis]
+        rel_vy_all = vy[np.newaxis, :] - vy[:, np.newaxis]
 
         # DX / DY components
         dx_all = np.sin(bearing_all) * cur_dis
@@ -340,6 +377,8 @@ class Environment(gym.Env):
             add_padded(dx_all)
             add_padded(dy_all)
             add_padded(trackdif_all)
+            add_padded(rel_vx_all)
+            add_padded(rel_vy_all)
 
             # Ownship state (5 values)
             obs.append(f.airspeed)
@@ -483,6 +522,7 @@ class Environment(gym.Env):
         self.conflicts = set()
         self.restricted_airspace_intrusions = set()
         self.done = set()
+        self.prev_restricted_status = {}  # Track restricted airspace status for exit rewards
 
         minx, miny, maxx, maxy = self.airspace.polygon.buffer(10 * u.nm).bounds
         self.world_bounds = (minx, miny, maxx, maxy)
