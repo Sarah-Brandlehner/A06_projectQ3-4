@@ -254,24 +254,6 @@ class Flight:
         # Check if the heading line intersects with the restricted airspace boundary
         return heading_line.intersects(restricted_airspace.polygon)
 
-    def closest_restricted_vertices(self, restricted_airspace: 'RestrictedAirspace', num_vertices: int = 4):
-        if restricted_airspace is None:
-            return [(0.0, 0.0, 0.0)] * num_vertices
-        
-        vertex_data = []
-        for vx, vy in list(restricted_airspace.polygon.exterior.coords)[:-1]:
-            # 1. Get global relative distance
-            dx, dy = vx - self.position.x, vy - self.position.y
-            dist = math.hypot(dx, dy)
-            
-            # 2. Rotate coordinates relative to aircraft heading (track)
-            rel_brg = math.atan2(dx, dy) - self.track
-            vertex_data.append((dist, dist * math.sin(rel_brg), dist * math.cos(rel_brg)))
-        
-        # Sort by distance and pad if necessary
-        vertex_data.sort(key=lambda x: x[0])
-        return (vertex_data + [(0.0, 0.0, 0.0)] * num_vertices)[:num_vertices]
-
     def closest_restricted_point(self, restricted_airspace: 'RestrictedAirspace'):
         """Finds the single closest point on the restricted boundary and returns (dist, rel_dx, rel_dy, approach_velocity)"""
         if restricted_airspace is None:
@@ -297,7 +279,7 @@ class Flight:
         return (dist, dist * math.sin(rel_brg), dist * math.cos(rel_brg), approach_velocity)
 
     @classmethod
-    def random(cls, airspace: Airspace, min_speed: float, max_speed: float, tol: float = 0., random_init_heading: bool = True):
+    def random(cls, airspace: Airspace, min_speed: float, max_speed: float, tol: float = 0., random_init_heading: bool = True, restricted_airspace: Optional['RestrictedAirspace'] = None):
         """
         Creates a random flight
 
@@ -305,6 +287,8 @@ class Flight:
         :param max_speed: maximum speed of the flights (in kt)
         :param min_speed: minimum speed of the flights (in kt)
         :param tol: tolerance to consider that the target has been reached (in meters)
+        :param random_init_heading: whether to use random initial heading
+        :param restricted_airspace: optional RestrictedAirspace to avoid spawning in
         :return: random flight
         """
         def random_point_in_polygon(polygon: Polygon) -> Point:
@@ -314,8 +298,10 @@ class Flight:
                 if polygon.contains(point):
                     return point
 
-        # random position
+        # random position - avoid restricted airspace if provided
         position = random_point_in_polygon(airspace.polygon)
+        while restricted_airspace is not None and restricted_airspace.polygon.contains(position):
+            position = random_point_in_polygon(airspace.polygon)
 
         # random target
         boundary = airspace.polygon.boundary
@@ -329,4 +315,3 @@ class Flight:
         airspeed = random.uniform(min_speed, max_speed)
 
         return cls(position, target, airspeed, random_init_heading=random_init_heading)
-

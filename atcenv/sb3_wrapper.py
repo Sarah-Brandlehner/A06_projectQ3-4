@@ -12,7 +12,7 @@ from gymnasium import spaces
 from atcenv.env import Environment, NUMBER_INTRUDERS_STATE
 
 # Number of sim steps per RL action (reference uses 5-10)
-ACTION_FREQUENCY = 3
+ACTION_FREQUENCY = 5
 
 # Observation size: 7 * NUMBER_INTRUDERS_STATE + 10
 # (7 relative state vectors per intruder + 5 ownship values + 2 restricted airspace flags + 3 closest vertex values)

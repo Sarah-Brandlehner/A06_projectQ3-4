@@ -173,7 +173,8 @@ class Environment(gym.Env):
         drift = np.zeros(self.num_flights)
         for i, f in enumerate(self.flights):
             if i not in self.done:
-                drift[i] = 0.5 - abs(f.drift)   # tutor's formula: rewards on-track, penalizes off-track
+                #drift[i] = 0.5 - abs(f.drift)   # tutor's formula: rewards on-track, penalizes off-track
+                drift[i]  = 0.5 - (abs(f.drift)**1.5)
         return drift
     
     def restricted_airspace_penalties(self):
@@ -361,14 +362,15 @@ class Environment(gym.Env):
             add_padded(rel_vx_all)
             add_padded(rel_vy_all)
 
-            # Ownship state
+            # Ownship state (5 values)
             obs.append(f.airspeed)
             obs.append(f.optimal_airspeed)
             obs.append(math.hypot(f.position.x - f.target.x, f.position.y - f.target.y))
             obs.append(math.sin(float(f.drift)))
             obs.append(math.cos(float(f.drift)))
             
-            # Restricted airspace state (as binary 0/1)
+            # --- NEW Restricted Airspace State (5 values) ---
+            # --- NEW Restricted Airspace State (5 values) ---
             obs.append(1.0 if f.in_restricted_airspace(self.restricted_airspace) else 0.0)
             obs.append(1.0 if f.heading_into_restricted_airspace(self.restricted_airspace) else 0.0)
             
@@ -470,7 +472,7 @@ class Environment(gym.Env):
         done_t = (self.i == self.max_episode_len) 
         done_e = (len(self.done) == self.num_flights)
 
-        #self.render() # comment out for training    
+        # self.render() # comment out for training    
 
         return obs, rew, done_t, done_e, {}
 
@@ -491,7 +493,7 @@ class Environment(gym.Env):
         
         while len(self.flights) < self.num_flights:
             valid = True
-            candidate = Flight.random(self.airspace, self.min_speed, self.max_speed, tol, random_init_heading=self.random_init_heading)
+            candidate = Flight.random(self.airspace, self.min_speed, self.max_speed, tol, random_init_heading=self.random_init_heading, restricted_airspace=self.restricted_airspace)
             for f in self.flights:
                 # Replaced shapely distance with math.hypot for fast reset
                 if math.hypot(candidate.position.x - f.position.x, candidate.position.y - f.position.y) < min_distance:
