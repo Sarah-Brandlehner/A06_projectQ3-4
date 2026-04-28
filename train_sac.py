@@ -7,9 +7,9 @@ heading + speed actions, 2 closest intruders in observation.
 # USE THE NUMBER OF CORES YOUR CPU HAS
 Usage:
     
-    python train_sac.py --timesteps 1500000 --num-flights 10 --num-envs 8 --train-all --run-name "relative_speed"
+    python train_sac.py --timesteps 1000000 --num-flights 10 --num-envs 16 --train-all --run-name "no_bubble"
 
-    python train_sac.py --timesteps 1500000 --num-flights 10 --num-envs 8 --train-all --run-name "basic_policy_finetune" --load "results/basic_policy_finetune/best_model/best_model.zip"
+    python train_sac.py --timesteps 1000000 --num-flights 10 --num-envs 16 --train-all --run-name "no_bubble" --load "results/no_bubble/best_model/best_model.zip"
 """
 import argparse
 import os
@@ -200,9 +200,11 @@ def train(args):
         )
         model.tensorboard_log = f"{run_dir}/tensorboard/"
     else:
+        policy_kwargs = dict(net_arch=[512,512,512])
         model = SAC(
             "MlpPolicy",
             train_env,
+            policy_kwargs= policy_kwargs,
             learning_rate=2e-4,             # 1e-3
             buffer_size=1_000_000,          # 100_000 (increased for multi-agent)
             batch_size=1024,                # 256 (increased for multi-agent)

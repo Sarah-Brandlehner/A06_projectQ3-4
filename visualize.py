@@ -13,9 +13,9 @@ Commands:
     To run the visualization in a specific run directory, use the --run-dir argument:
 
     python visualize.py compare --run-dir results/test_03drift_40conflict
-    python visualize.py evaluate --run-dir results/relative_speed --workers 8
+    python visualize.py evaluate --run-dir results/bigger_network_finetune1 --workers 8 --episodes 500
     python visualize.py training --run-dir results/expanded_obs_matrix_4
-    python visualize.py trajectory --run-dir results/basic_policy_finetune
+    python visualize.py trajectory --run-dir results/bigger_network_finetune1
     python visualize.py compare --run-dir results/alert_shared_reward_ALL_AGENTS
     python visualize.py evaluate --run-dir results/minimal_reward_ALL_AGENTS
     python visualize.py training --run-dir results/test_03drift_40conflict
@@ -287,6 +287,7 @@ def _eval_episodes_worker(model_path, episode_indices, num_flights, deploy_all, 
         "targets_reached": [],
         "episode_length": [],
         "total_drift": [],
+        "restricted_intrusions": [],
     }
 
     for ep in episode_indices:
@@ -294,6 +295,7 @@ def _eval_episodes_worker(model_path, episode_indices, num_flights, deploy_all, 
         done = False
         ep_conflicts = 0
         ep_drift = 0.0
+        ep_restricted_intrusions = 0
         step = 0
 
         while not done:
@@ -319,6 +321,7 @@ def _eval_episodes_worker(model_path, episode_indices, num_flights, deploy_all, 
                     break
 
             ep_conflicts += len(env.conflicts)
+            ep_restricted_intrusions += len(env.restricted_airspace_intrusions)
             for i, f in enumerate(env.flights):
                 if i not in env.done:
                     ep_drift += abs(f.drift)
@@ -328,6 +331,7 @@ def _eval_episodes_worker(model_path, episode_indices, num_flights, deploy_all, 
         local_metrics["targets_reached"].append(len(env.done))
         local_metrics["episode_length"].append(step)
         local_metrics["total_drift"].append(ep_drift)
+        local_metrics["restricted_intrusions"].append(ep_restricted_intrusions)
 
     env.close()
     return local_metrics
@@ -351,6 +355,7 @@ def run_evaluation(model_path, n_episodes=30, num_flights=5, deploy_all=True, wo
         "targets_reached": [],
         "episode_length": [],
         "total_drift": [],
+        "restricted_intrusions": [],
     }
 
     with ProcessPoolExecutor(max_workers=len(episode_batches)) as executor:
@@ -372,7 +377,7 @@ def plot_evaluation(model_path, n_episodes=30, num_flights=5,
     print(f"Running {n_episodes} episodes across {workers} worker(s)...")
     metrics = run_evaluation(model_path, n_episodes, num_flights, deploy_all=True, workers=workers, random_heading=random_heading)
 
-    fig, axes = plt.subplots(2, 2, figsize=(14, 10))
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
 
     # Conflicts per episode
     ax = axes[0, 0]
@@ -384,11 +389,15 @@ def plot_evaluation(model_path, n_episodes=30, num_flights=5,
     ax.set_title("Conflicts per Episode")
     ax.legend()
 
-    # Targets reached
+    # Targets reached (with mean and max)
     ax = axes[0, 1]
     ax.bar(range(len(metrics["targets_reached"])), metrics["targets_reached"],
            color="#4CAF50", alpha=0.7)
-    ax.axhline(num_flights, color="black", linestyle="--", label=f"Max: {num_flights}")
+    mean_targets = np.mean(metrics["targets_reached"])
+    ax.axhline(mean_targets, color="blue", linestyle="--", linewidth=2,
+               label=f"Mean: {mean_targets:.1f}")
+    ax.axhline(num_flights, color="black", linestyle="--", linewidth=2, 
+               label=f"Max: {num_flights}")
     ax.set_xlabel("Episode")
     ax.set_ylabel("Targets Reached")
     ax.set_title("Targets Reached per Episode")
@@ -396,14 +405,14 @@ def plot_evaluation(model_path, n_episodes=30, num_flights=5,
     ax.legend()
 
     # Episode length distribution
-    ax = axes[1, 0]
+    ax = axes[0, 2]
     ax.hist(metrics["episode_length"], bins=20, color="#2196F3", alpha=0.7, edgecolor="black")
     ax.set_xlabel("Episode Length (RL steps)")
     ax.set_ylabel("Count")
     ax.set_title("Episode Length Distribution")
 
     # Average drift per episode
-    ax = axes[1, 1]
+    ax = axes[1, 0]
     ax.bar(range(len(metrics["total_drift"])), metrics["total_drift"], color="#FF9800", alpha=0.7)
     ax.axhline(np.mean(metrics["total_drift"]), color="black", linestyle="--",
                label=f"Mean: {np.mean(metrics['total_drift']):.1f}")
@@ -412,7 +421,41 @@ def plot_evaluation(model_path, n_episodes=30, num_flights=5,
     ax.set_title("Cumulative Drift per Episode")
     ax.legend()
 
+    # Restricted airspace intrusions per episode
+    ax = axes[1, 1]
+    ax.bar(range(len(metrics["restricted_intrusions"])), metrics["restricted_intrusions"], color="#9C27B0", alpha=0.7)
+    ax.axhline(np.mean(metrics["restricted_intrusions"]), color="black", linestyle="--",
+               label=f"Mean: {np.mean(metrics['restricted_intrusions']):.1f}")
+    ax.set_xlabel("Episode")
+    ax.set_ylabel("Restricted Intrusions")
+    ax.set_title("Restricted Airspace Intrusions per Episode")
+    ax.legend()
+
+    # Summary statistics text
+    ax = axes[1, 2]
+    ax.axis("off")
     conflict_free = sum(1 for c in metrics["conflicts"] if c == 0)
+    intrusion_free = sum(1 for r in metrics["restricted_intrusions"] if r == 0)
+    summary_text = (
+        f"Evaluation Summary\n"
+        f"{'═' * 30}\n"
+        f"Episodes: {n_episodes}\n"
+        f"Num Flights: {num_flights}\n\n"
+        f"Conflicts:\n"
+        f"  Mean: {np.mean(metrics['conflicts']):.2f}\n"
+        f"  Conflict-free: {conflict_free}/{n_episodes} ({100*conflict_free/n_episodes:.1f}%)\n\n"
+        f"Targets Reached:\n"
+        f"  Mean: {mean_targets:.2f}/{num_flights}\n"
+        f"  Max: {np.max(metrics['targets_reached']):.0f}\n\n"
+        f"Restricted Intrusions:\n"
+        f"  Mean: {np.mean(metrics['restricted_intrusions']):.2f}\n"
+        f"  Intrusion-free: {intrusion_free}/{n_episodes} ({100*intrusion_free/n_episodes:.1f}%)\n\n"
+        f"Drift:\n"
+        f"  Mean: {np.mean(metrics['total_drift']):.2f} rad"
+    )
+    ax.text(0.1, 0.5, summary_text, fontsize=10, verticalalignment="center",
+            fontfamily="monospace", bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5))
+
     fig.suptitle(f"Evaluation Summary — {conflict_free}/{n_episodes} conflict-free episodes "
                  f"({100*conflict_free/n_episodes:.0f}%)", fontsize=14, fontweight="bold")
 
