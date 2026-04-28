@@ -14,8 +14,9 @@ from atcenv.env import Environment, NUMBER_INTRUDERS_STATE
 # Number of sim steps per RL action (reference uses 5-10)
 ACTION_FREQUENCY = 5
 
-# Observation size: 5 * NUMBER_INTRUDERS_STATE + 5
-OBS_SIZE = 5 * NUMBER_INTRUDERS_STATE + 5
+# Observation size: 5 * NUMBER_INTRUDERS_STATE + 16
+# Updated for 4 intruders (20) + 5 ownship + 2 flags + 3 for 1 restricted point = 30
+OBS_SIZE = 5 * NUMBER_INTRUDERS_STATE + 10
 
 # Normalization constants (matched to reference bluesky-gym ranges)
 INTRUDER_DIST_NORM = 50000.0   # ~27 NM — intruder distances
@@ -98,7 +99,20 @@ class ATCEnvWrapper(gym.Env):
         # Distance to target: normalize by larger range (targets can be far)
         obs[5*n+2]   = (obs[5*n+2] - TARGET_DIST_NORM * 0.5) / (TARGET_DIST_NORM * 0.5)
 
-        # sin/cos drift: already in [-1, 1]
+        n = NUMBER_INTRUDERS_STATE # which is 4
+        res_idx = 5 * n + 5 # starts at index 25
+
+        if res_idx + 4 < len(obs):
+            # obs[25] = in_restricted (0 or 1, no norm needed)
+            
+            # obs[26] = distance
+            obs[res_idx+1] = (obs[res_idx+1] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
+            
+            # obs[27] = sin_brg (already -1 to 1)
+            # obs[28] = cos_brg (already -1 to 1)
+            
+            # obs[29] = approach rate (norm by max speed)
+            obs[res_idx+4] = obs[res_idx+4] / 250.0
 
         return np.clip(obs, -1.0, 1.0).astype(np.float32)
 
