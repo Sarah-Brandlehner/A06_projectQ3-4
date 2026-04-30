@@ -50,6 +50,17 @@ from stable_baselines3 import SAC
 
 from atcenv.env import Environment, NUMBER_INTRUDERS_STATE
 from atcenv.sb3_wrapper import ATCEnvWrapper, ACTION_FREQUENCY
+import atcenv.mvp_resolver as _mvp_improved
+import atcenv.mvp_resolver_v0 as _mvp_original
+
+# Set by --resolver argument in main(); used by _compute_actions.
+_MVP_VERSION = "improved"   # "improved" | "original"
+
+
+def mvp_actions_for_env(env):
+    if _MVP_VERSION == "original":
+        return _mvp_original.mvp_actions_for_env(env)
+    return _mvp_improved.mvp_actions_for_env(env)
 
 # Normalization (must match sb3_wrapper.py)
 INTRUDER_DIST_NORM = 50000.0
@@ -136,9 +147,36 @@ def plot_training_curves(eval_log_path="results/eval_logs/evaluations.npz",
     plt.show()
 
 
+# ────────────────────────── POLICY HELPERS ──────────────────────────
+
+def _load_policy(policy, model_path):
+    """policy in {'sac', 'mvp'}. Returns the SAC model or None for MVP."""
+    if policy == "mvp":
+        return None
+    return SAC.load(model_path)
+
+
+def _sac_actions(model, env, raw_obs_list):
+    """Build (n_active, 2) action array from SAC model predictions."""
+    active_indices = [i for i in range(len(env.flights)) if i not in env.done]
+    actions = np.zeros((len(active_indices), 2), dtype=np.float32)
+    for slot, _ in enumerate(active_indices):
+        obs = normalize_obs(raw_obs_list[slot])
+        action, _ = model.predict(obs, deterministic=True)
+        actions[slot] = action
+    return actions
+
+
+def _compute_actions(policy, model, env, raw_obs_list):
+    """Dispatch action computation based on policy type."""
+    if policy == "mvp":
+        return mvp_actions_for_env(env)
+    return _sac_actions(model, env, raw_obs_list)
+
+
 # ────────────────────────── TRAJECTORY PLOT ──────────────────────────
 
-def record_episode(model, num_flights=5, deploy_all=True, random_heading=True):
+def record_episode(model, num_flights=5, deploy_all=True, random_heading=True, policy="sac"):
     """Run one episode and record all aircraft trajectories."""
     env = Environment(num_flights=num_flights, random_init_heading=random_heading)
     raw_obs_list = env.reset(num_flights)
@@ -155,16 +193,8 @@ def record_episode(model, num_flights=5, deploy_all=True, random_heading=True):
     total_restricted_intrusions = 0
 
     while not done:
-        # Get actions
-        current_actions = {}
-        if deploy_all:
-            agent_idx = 0
-            for i in range(num_flights):
-                if i not in env.done:
-                    obs = normalize_obs(raw_obs_list[agent_idx])
-                    action, _ = model.predict(obs, deterministic=True)
-                    current_actions[i] = action
-                    agent_idx += 1
+        # Compute actions once per RL decision step (held across ACTION_FREQUENCY env steps)
+        actions = _compute_actions(policy, model, env, raw_obs_list)
 
         # Record positions before stepping
         for i, f in enumerate(env.flights):
@@ -173,17 +203,14 @@ def record_episode(model, num_flights=5, deploy_all=True, random_heading=True):
             trajectories[i]["conflicts"].append(i in env.conflicts)
             trajectories[i]["restricted_intrusions"].append(i in env.restricted_airspace_intrusions)
 
-        # Step with ACTION_FREQUENCY
         for _ in range(ACTION_FREQUENCY):
-            active_indices = [i for i in range(num_flights) if i not in env.done]
-            actions = np.zeros((len(active_indices), 2), dtype=np.float32)
-            for idx, agent_num in enumerate(active_indices):
-                actions[idx] = current_actions.get(agent_num, np.array([0.0, 0.0], dtype=np.float32))
-
             raw_obs_list, rewards, done_t, done_e, info = env.step(actions)
             if done_t or done_e:
                 done = True
                 break
+            # If active set shrank mid-burst (a flight reached its target), trim actions
+            if actions.shape[0] != len(env.flights) - len(env.done):
+                actions = _compute_actions(policy, model, env, raw_obs_list)
 
         total_conflicts += len(env.conflicts)
         total_restricted_intrusions += len(env.restricted_airspace_intrusions)
@@ -206,11 +233,12 @@ def record_episode(model, num_flights=5, deploy_all=True, random_heading=True):
 
 
 def plot_trajectories(model_path, num_flights=5, deploy_all=True,
-                      save_path="results/plots/trajectories.png", random_heading=True):
+                      save_path="results/plots/trajectories.png", random_heading=True,
+                      policy="sac"):
     """Plot aircraft trajectories for one episode."""
-    model = SAC.load(model_path)
+    model = _load_policy(policy, model_path)
     trajectories, targets, airspace, restricted_airspace, total_conflicts, total_restricted_intrusions = record_episode(
-        model, num_flights, deploy_all
+        model, num_flights, deploy_all, random_heading=random_heading, policy=policy
     )
 
     fig, ax = plt.subplots(1, 1, figsize=(10, 10))
@@ -266,7 +294,7 @@ def plot_trajectories(model_path, num_flights=5, deploy_all=True,
     ax.legend(handles=[start_patch, target_patch, conflict_patch, restricted_patch], loc="upper right")
 
     mode = "All agents" if deploy_all else "Single actor"
-    ax.set_title(f"Aircraft Trajectories ({mode}, {num_flights} flights, "
+    ax.set_title(f"Aircraft Trajectories — {policy.upper()} ({mode}, {num_flights} flights, "
                  f"{total_conflicts} conflicts, {total_restricted_intrusions} restricted intrusions)", fontsize=13)
     ax.set_xlabel("X (km)")
     ax.set_ylabel("Y (km)")
@@ -282,9 +310,9 @@ def plot_trajectories(model_path, num_flights=5, deploy_all=True,
 
 # ────────────────────────── EVALUATION METRICS ──────────────────────────
 
-def _eval_episodes_worker(model_path, episode_indices, num_flights, deploy_all, random_heading=True):
+def _eval_episodes_worker(model_path, episode_indices, num_flights, deploy_all, random_heading=True, policy="sac"):
     """Worker function that runs a batch of episodes (used by ProcessPoolExecutor)."""
-    model = SAC.load(model_path)
+    model = _load_policy(policy, model_path)
     env = Environment(num_flights=num_flights, random_init_heading=random_heading)
 
     local_metrics = {
@@ -304,26 +332,15 @@ def _eval_episodes_worker(model_path, episode_indices, num_flights, deploy_all, 
         step = 0
 
         while not done:
-            current_actions = {}
-            if deploy_all:
-                agent_idx = 0
-                for i in range(num_flights):
-                    if i not in env.done:
-                        obs = normalize_obs(raw_obs_list[agent_idx])
-                        action, _ = model.predict(obs, deterministic=True)
-                        current_actions[i] = action
-                        agent_idx += 1
+            actions = _compute_actions(policy, model, env, raw_obs_list)
 
             for _ in range(ACTION_FREQUENCY):
-                active_indices = [i for i in range(num_flights) if i not in env.done]
-                actions = np.zeros((len(active_indices), 2), dtype=np.float32)
-                for idx, agent_num in enumerate(active_indices):
-                    actions[idx] = current_actions.get(agent_num, np.array([0.0, 0.0], dtype=np.float32))
-
                 raw_obs_list, rewards, done_t, done_e, info = env.step(actions)
                 if done_t or done_e:
                     done = True
                     break
+                if actions.shape[0] != len(env.flights) - len(env.done):
+                    actions = _compute_actions(policy, model, env, raw_obs_list)
 
             ep_conflicts += len(env.conflicts)
             ep_restricted_intrusions += len(env.restricted_airspace_intrusions)
@@ -342,11 +359,11 @@ def _eval_episodes_worker(model_path, episode_indices, num_flights, deploy_all, 
     return local_metrics
 
 
-def run_evaluation(model_path, n_episodes=30, num_flights=5, deploy_all=True, workers=1, random_heading=True):
+def run_evaluation(model_path, n_episodes=30, num_flights=5, deploy_all=True, workers=1, random_heading=True, policy="sac"):
     """Run evaluation and return per-episode metrics (parallelized across workers)."""
     if workers <= 1:
         # Single-process fallback
-        return _eval_episodes_worker(model_path, list(range(n_episodes)), num_flights, deploy_all, random_heading)
+        return _eval_episodes_worker(model_path, list(range(n_episodes)), num_flights, deploy_all, random_heading, policy)
 
     # Split episodes across workers
     episode_batches = [[] for _ in range(workers)]
@@ -365,7 +382,7 @@ def run_evaluation(model_path, n_episodes=30, num_flights=5, deploy_all=True, wo
 
     with ProcessPoolExecutor(max_workers=len(episode_batches)) as executor:
         futures = [
-            executor.submit(_eval_episodes_worker, model_path, batch, num_flights, deploy_all, random_heading)
+            executor.submit(_eval_episodes_worker, model_path, batch, num_flights, deploy_all, random_heading, policy)
             for batch in episode_batches
         ]
         for future in futures:
@@ -377,10 +394,11 @@ def run_evaluation(model_path, n_episodes=30, num_flights=5, deploy_all=True, wo
 
 
 def plot_evaluation(model_path, n_episodes=30, num_flights=5,
-                    save_path="results/plots/evaluation.png", workers=1, random_heading=True):
+                    save_path="results/plots/evaluation.png", workers=1, random_heading=True,
+                    policy="sac"):
     """Run evaluation and plot summary metrics."""
-    print(f"Running {n_episodes} episodes across {workers} worker(s)...")
-    metrics = run_evaluation(model_path, n_episodes, num_flights, deploy_all=True, workers=workers, random_heading=random_heading)
+    print(f"Running {n_episodes} episodes across {workers} worker(s) [policy={policy}]...")
+    metrics = run_evaluation(model_path, n_episodes, num_flights, deploy_all=True, workers=workers, random_heading=random_heading, policy=policy)
 
     fig, axes = plt.subplots(2, 3, figsize=(18, 10))
 
@@ -461,7 +479,7 @@ def plot_evaluation(model_path, n_episodes=30, num_flights=5,
     ax.text(0.1, 0.5, summary_text, fontsize=10, verticalalignment="center",
             fontfamily="monospace", bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5))
 
-    fig.suptitle(f"Evaluation Summary — {conflict_free}/{n_episodes} conflict-free episodes "
+    fig.suptitle(f"Evaluation Summary [{policy.upper()}] — {conflict_free}/{n_episodes} conflict-free episodes "
                  f"({100*conflict_free/n_episodes:.0f}%)", fontsize=14, fontweight="bold")
 
     plt.tight_layout()
@@ -474,7 +492,8 @@ def plot_evaluation(model_path, n_episodes=30, num_flights=5,
 # ────────────────────────── PARAMETER SWEEPS ──────────────────────────
 
 def _eval_sweep_worker(model_path, episode_indices, num_flights, deploy_all,
-                       random_heading, restricted_scale_factor, uncertainty_flags):
+                       random_heading, restricted_scale_factor, uncertainty_flags,
+                       policy="sac"):
     """Worker that runs episodes under specific environment overrides.
 
     uncertainty_flags is a dict like {"wind": bool, "delay": bool, "position": bool};
@@ -486,7 +505,7 @@ def _eval_sweep_worker(model_path, episode_indices, num_flights, deploy_all,
         _env_mod.ENABLE_DELAY = bool(uncertainty_flags.get("delay", False))
         _env_mod.ENABLE_POSITION_UNCERTAINTY = bool(uncertainty_flags.get("position", False))
 
-    model = SAC.load(model_path)
+    model = _load_policy(policy, model_path)
     env = Environment(num_flights=num_flights, random_init_heading=random_heading,
                       restricted_scale_factor=restricted_scale_factor)
 
@@ -507,26 +526,15 @@ def _eval_sweep_worker(model_path, episode_indices, num_flights, deploy_all,
         step = 0
 
         while not done:
-            current_actions = {}
-            if deploy_all:
-                agent_idx = 0
-                for i in range(num_flights):
-                    if i not in env.done:
-                        obs = normalize_obs(raw_obs_list[agent_idx])
-                        action, _ = model.predict(obs, deterministic=True)
-                        current_actions[i] = action
-                        agent_idx += 1
+            actions = _compute_actions(policy, model, env, raw_obs_list)
 
             for _ in range(ACTION_FREQUENCY):
-                active_indices = [i for i in range(num_flights) if i not in env.done]
-                actions = np.zeros((len(active_indices), 2), dtype=np.float32)
-                for idx, agent_num in enumerate(active_indices):
-                    actions[idx] = current_actions.get(agent_num, np.array([0.0, 0.0], dtype=np.float32))
-
                 raw_obs_list, rewards, done_t, done_e, info = env.step(actions)
                 if done_t or done_e:
                     done = True
                     break
+                if actions.shape[0] != len(env.flights) - len(env.done):
+                    actions = _compute_actions(policy, model, env, raw_obs_list)
 
             ep_conflicts += len(env.conflicts)
             ep_restricted_intrusions += len(env.restricted_airspace_intrusions)
@@ -546,11 +554,13 @@ def _eval_sweep_worker(model_path, episode_indices, num_flights, deploy_all,
 
 
 def _run_sweep_point(model_path, n_episodes, num_flights, workers,
-                     random_heading, restricted_scale_factor, uncertainty_flags):
+                     random_heading, restricted_scale_factor, uncertainty_flags,
+                     policy="sac"):
     """Run n_episodes for one sweep point and return aggregated metrics."""
     if workers <= 1:
         return _eval_sweep_worker(model_path, list(range(n_episodes)), num_flights,
-                                  True, random_heading, restricted_scale_factor, uncertainty_flags)
+                                  True, random_heading, restricted_scale_factor, uncertainty_flags,
+                                  policy)
 
     episode_batches = [[] for _ in range(workers)]
     for ep in range(n_episodes):
@@ -567,7 +577,8 @@ def _run_sweep_point(model_path, n_episodes, num_flights, workers,
     with ProcessPoolExecutor(max_workers=len(episode_batches)) as executor:
         futures = [
             executor.submit(_eval_sweep_worker, model_path, batch, num_flights,
-                            True, random_heading, restricted_scale_factor, uncertainty_flags)
+                            True, random_heading, restricted_scale_factor, uncertainty_flags,
+                            policy)
             for batch in episode_batches
         ]
         for future in futures:
@@ -683,7 +694,8 @@ def _plot_sweep_bars(x_labels, summaries, title, save_path):
 
 
 def sweep_restricted_airspace_size(model_path, start, end, step, n_episodes,
-                                   num_flights, workers, random_heading, save_path):
+                                   num_flights, workers, random_heading, save_path,
+                                   policy="sac"):
     sizes = list(np.arange(start, end, step))
     if not sizes:
         raise ValueError(f"Empty range: start={start}, end={end}, step={step}")
@@ -692,18 +704,18 @@ def sweep_restricted_airspace_size(model_path, start, end, step, n_episodes,
             raise ValueError(f"restricted airspace scale_factor must be in (0, 1); got {s}")
     summaries = []
     for s in sizes:
-        print(f"[restricted_airspace_size] scale_factor={s:.3f} | {n_episodes} eps × {workers} workers")
+        print(f"[restricted_airspace_size] scale_factor={s:.3f} | {n_episodes} eps × {workers} workers [policy={policy}]")
         m = _run_sweep_point(model_path, n_episodes, num_flights, workers,
                              random_heading, restricted_scale_factor=float(s),
-                             uncertainty_flags=None)
+                             uncertainty_flags=None, policy=policy)
         summaries.append(_summarize(m, n_episodes))
     _plot_sweep_lines(sizes, summaries, "Restricted Airspace Scale Factor",
-                      f"Restricted Airspace Size Sweep ({n_episodes} episodes / point)",
+                      f"Restricted Airspace Size Sweep [{policy.upper()}] ({n_episodes} episodes / point)",
                       save_path)
 
 
 def sweep_uncertainties(model_path, n_episodes, num_flights, workers,
-                        random_heading, save_path):
+                        random_heading, save_path, policy="sac"):
     configs = [
         ("none", {"wind": False, "delay": False, "position": False}),
         ("position", {"wind": False, "delay": False, "position": True}),
@@ -713,19 +725,19 @@ def sweep_uncertainties(model_path, n_episodes, num_flights, workers,
     summaries = []
     labels = []
     for label, flags in configs:
-        print(f"[uncertainties] {label} | {n_episodes} eps × {workers} workers")
+        print(f"[uncertainties] {label} | {n_episodes} eps × {workers} workers [policy={policy}]")
         m = _run_sweep_point(model_path, n_episodes, num_flights, workers,
                              random_heading, restricted_scale_factor=None,
-                             uncertainty_flags=flags)
+                             uncertainty_flags=flags, policy=policy)
         summaries.append(_summarize(m, n_episodes))
         labels.append(label)
     _plot_sweep_bars(labels, summaries,
-                     f"Uncertainty Sweep ({n_episodes} episodes / point)",
+                     f"Uncertainty Sweep [{policy.upper()}] ({n_episodes} episodes / point)",
                      save_path)
 
 
 def sweep_aircraft_num(model_path, start, end, step, n_episodes, workers,
-                       random_heading, save_path):
+                       random_heading, save_path, policy="sac"):
     counts = list(range(int(start), int(end), int(step)))
     if not counts:
         raise ValueError(f"Empty range: start={start}, end={end}, step={step}")
@@ -734,13 +746,13 @@ def sweep_aircraft_num(model_path, start, end, step, n_episodes, workers,
             raise ValueError(f"aircraft count must be >= 1; got {c}")
     summaries = []
     for c in counts:
-        print(f"[aircraft_num] num_flights={c} | {n_episodes} eps × {workers} workers")
+        print(f"[aircraft_num] num_flights={c} | {n_episodes} eps × {workers} workers [policy={policy}]")
         m = _run_sweep_point(model_path, n_episodes, num_flights=c, workers=workers,
                              random_heading=random_heading, restricted_scale_factor=None,
-                             uncertainty_flags=None)
+                             uncertainty_flags=None, policy=policy)
         summaries.append(_summarize(m, n_episodes))
     _plot_sweep_lines(counts, summaries, "Number of Aircraft",
-                     f"Aircraft Count Sweep ({n_episodes} episodes / point)",
+                     f"Aircraft Count Sweep [{policy.upper()}] ({n_episodes} episodes / point)",
                      save_path)
 
 
@@ -836,14 +848,70 @@ def compare_checkpoints(checkpoint_dir="results/checkpoints/",
     plt.show()
 
 
+# ────────────────────────── POLICY COMPARISON (SAC vs MVP) ──────────────────────────
+
+def compare_policies(model_path, n_episodes=100, num_flights=5, workers=1,
+                     random_heading=True, save_path="results/plots/policy_comparison.png"):
+    """Run both SAC and MVP on the same number of episodes and plot side-by-side bars."""
+    print(f"[compare_policies] SAC: {n_episodes} eps × {workers} workers")
+    sac_metrics = run_evaluation(model_path, n_episodes, num_flights, deploy_all=True,
+                                 workers=workers, random_heading=random_heading, policy="sac")
+    print(f"[compare_policies] MVP: {n_episodes} eps × {workers} workers")
+    mvp_metrics = run_evaluation(model_path, n_episodes, num_flights, deploy_all=True,
+                                 workers=workers, random_heading=random_heading, policy="mvp")
+
+    sac_s = _summarize(sac_metrics, n_episodes)
+    mvp_s = _summarize(mvp_metrics, n_episodes)
+
+    metric_keys = [
+        ("conflict_free_pct",  "Conflict-Free Episodes (%)",     "#2196F3", (0, 105)),
+        ("intrusion_free_pct", "Intrusion-Free Episodes (%)",    "#9C27B0", (0, 105)),
+        ("mean_targets",       "Mean Targets Reached / Episode", "#4CAF50", None),
+        ("mean_drift",         "Mean Cumulative Drift / Episode","#FF9800", None),
+        ("mean_conflicts",     "Mean Conflicts / Episode",       "#F44336", None),
+        ("mean_intrusions",    "Mean Intrusions / Episode",      "#795548", None),
+    ]
+
+    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    labels = ["SAC", "MVP"]
+    xs = np.arange(2)
+
+    for ax, (key, title, color, ylim) in zip(axes.flat, metric_keys):
+        vals = [sac_s[key], mvp_s[key]]
+        bars = ax.bar(xs, vals, color=[color, "#777777"], alpha=0.85)
+        ax.set_xticks(xs)
+        ax.set_xticklabels(labels)
+        ax.set_title(title)
+        if ylim is not None:
+            ax.set_ylim(*ylim)
+        ax.grid(True, alpha=0.3, axis="y")
+        for bar, v in zip(bars, vals):
+            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
+                    f"{v:.2f}", ha="center", va="bottom", fontsize=10)
+
+    fig.suptitle(f"Policy Comparison: SAC vs MVP ({n_episodes} episodes, {num_flights} flights)",
+                 fontsize=14, fontweight="bold")
+    plt.tight_layout()
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path, dpi=150, bbox_inches="tight")
+    print(f"Saved policy comparison plot to {save_path}")
+    print("\n=== Summary ===")
+    for key, title, _, _ in metric_keys:
+        print(f"  {title:40s}  SAC={sac_s[key]:8.3f}   MVP={mvp_s[key]:8.3f}")
+    plt.show()
+
+
 # ────────────────────────── MAIN ──────────────────────────
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ATC Model Visualization Tools")
     parser.add_argument("command",
                         choices=["training", "trajectory", "evaluate", "compare",
-                                 "restricted_airspace_size", "uncertainties", "aircraft_num"],
+                                 "restricted_airspace_size", "uncertainties", "aircraft_num",
+                                 "compare_policies"],
                         help="Which visualization to run")
+    parser.add_argument("--policy", type=str, default="sac", choices=["sac", "mvp"],
+                        help="Which controller to evaluate (sac = trained model, mvp = geometric resolver)")
     parser.add_argument("--run-dir", type=str, default="results",
                         help="The results directory to analyze (e.g., results/test_03drift_40conflict)")
     parser.add_argument("--model-name", type=str, default="best_model/best_model.zip",
@@ -860,8 +928,15 @@ if __name__ == "__main__":
                         help="Sweep end (exclusive).")
     parser.add_argument("--step", type=float, default=None,
                         help="Sweep step.")
+    parser.add_argument("--resolver", type=str, default="improved",
+                        choices=["improved", "original"],
+                        help="MVP resolver variant: 'improved' (v4, with path-bias + bug fixes) "
+                             "or 'original' (v0, baseline). Only used when --policy mvp.")
     args = parser.parse_args()
-    
+
+    import visualize as _self
+    _self._MVP_VERSION = args.resolver
+
     random_heading_val = not args.no_random_heading
 
     # Construct the full paths based on the run-dir
@@ -869,19 +944,22 @@ if __name__ == "__main__":
     eval_log_path = os.path.join(args.run_dir, "eval_logs", "evaluations.npz")
     checkpoint_dir = os.path.join(args.run_dir, "checkpoints")
 
+    policy = args.policy
+    suffix = f"_{policy}"
+
     if args.command == "training":
-        plot_training_curves(eval_log_path=eval_log_path, 
+        plot_training_curves(eval_log_path=eval_log_path,
                              save_path=os.path.join(args.run_dir, "plots", "training_curves.png"))
 
     elif args.command == "trajectory":
         plot_trajectories(model_path, args.num_flights, deploy_all=True,
-                          save_path=os.path.join(args.run_dir, "plots", "trajectories.png"),
-                          random_heading=random_heading_val)
+                          save_path=os.path.join(args.run_dir, "plots", f"trajectories{suffix}.png"),
+                          random_heading=random_heading_val, policy=policy)
 
     elif args.command == "evaluate":
         plot_evaluation(model_path, args.episodes, args.num_flights,
-                        save_path=os.path.join(args.run_dir, "plots", "evaluation.png"),
-                        workers=args.workers, random_heading=random_heading_val)
+                        save_path=os.path.join(args.run_dir, "plots", f"evaluation{suffix}.png"),
+                        workers=args.workers, random_heading=random_heading_val, policy=policy)
 
     elif args.command == "compare":
         compare_checkpoints(checkpoint_dir=checkpoint_dir,
@@ -890,10 +968,16 @@ if __name__ == "__main__":
                             save_path=os.path.join(args.run_dir, "plots", "checkpoint_comparison.png"),
                             workers=args.workers)
 
+    elif args.command == "compare_policies":
+        save_path = os.path.join(args.run_dir, "plots", "policy_comparison_sac_vs_mvp.png")
+        compare_policies(model_path, n_episodes=args.episodes, num_flights=args.num_flights,
+                         workers=args.workers, random_heading=random_heading_val,
+                         save_path=save_path)
+
     elif args.command in ("restricted_airspace_size", "uncertainties", "aircraft_num"):
         run_name = os.path.basename(os.path.normpath(args.run_dir))
         sweeps_dir = os.path.join("results", "sweeps")
-        save_path = os.path.join(sweeps_dir, f"{run_name}_{args.command}.png")
+        save_path = os.path.join(sweeps_dir, f"{run_name}_{args.command}{suffix}.png")
 
         if args.command == "restricted_airspace_size":
             if args.start is None or args.end is None or args.step is None:
@@ -902,13 +986,13 @@ if __name__ == "__main__":
                 model_path, start=args.start, end=args.end, step=args.step,
                 n_episodes=args.episodes, num_flights=args.num_flights,
                 workers=args.workers, random_heading=random_heading_val,
-                save_path=save_path,
+                save_path=save_path, policy=policy,
             )
         elif args.command == "uncertainties":
             sweep_uncertainties(
                 model_path, n_episodes=args.episodes, num_flights=args.num_flights,
                 workers=args.workers, random_heading=random_heading_val,
-                save_path=save_path,
+                save_path=save_path, policy=policy,
             )
         elif args.command == "aircraft_num":
             if args.start is None or args.end is None or args.step is None:
@@ -916,5 +1000,5 @@ if __name__ == "__main__":
             sweep_aircraft_num(
                 model_path, start=int(args.start), end=int(args.end), step=int(args.step),
                 n_episodes=args.episodes, workers=args.workers,
-                random_heading=random_heading_val, save_path=save_path,
+                random_heading=random_heading_val, save_path=save_path, policy=policy,
             )

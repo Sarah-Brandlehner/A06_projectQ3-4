@@ -1,0 +1,20 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c \"import ast; ast.parse\\(open\\(r'd:/Pliki Pliczki/samolociki inzynierka/BSc_Y2/Textbooks_Q3_Q4/AE2224-I-TAS/Software/repo/A06_projectQ3-4/visualize.py', encoding='utf-8'\\).read\\(\\)\\); ast.parse\\(open\\(r'd:/Pliki Pliczki/samolociki inzynierka/BSc_Y2/Textbooks_Q3_Q4/AE2224-I-TAS/Software/repo/A06_projectQ3-4/atcenv/mvp_resolver.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")",
+      "Bash(python visualize.py evaluate --run-dir results/mvp_diag --policy mvp --episodes 30 --workers 4 --num-flights 10)",
+      "Bash(python _mvp_diag.py)",
+      "Bash(python bench_mvp.py --episodes 60 --num-flights 10 --workers 6 --tag \"BASELINE_v0\")",
+      "Bash(python bench_mvp.py --episodes 60 --num-flights 8 --workers 6 --tag \"BASELINE_v0_8f\")",
+      "Bash(python bench_mvp.py --episodes 40 --num-flights 14 --workers 6 --tag \"BASELINE_v0_14f\")",
+      "Bash(python bench_mvp.py --episodes 60 --num-flights 10 --workers 6 --tag \"v1_10f\")",
+      "Bash(python bench_mvp.py --episodes 60 --num-flights 10 --workers 6 --tag \"v2_10f\")",
+      "Bash(python bench_mvp.py --episodes 60 --num-flights 10 --workers 6 --tag \"v2b_10f\")",
+      "Bash(python bench_mvp.py --episodes 60 --num-flights 10 --workers 6 --tag \"v3_10f\")",
+      "Bash(python bench_mvp.py --episodes 60 --num-flights 10 --workers 6 --tag \"v4_10f\")",
+      "Bash(python bench_mvp.py --episodes 60 --num-flights 10 --workers 6 --tag \"v4b_10f\")",
+      "Bash(python bench_mvp.py --episodes 60 --num-flights 10 --workers 6 --tag \"v4c_10f\")",
+      "Bash(python bench_mvp.py --episodes 60 --num-flights 10 --workers 6 --tag \"v5_10f\")"
+    ]
+  }
+}
