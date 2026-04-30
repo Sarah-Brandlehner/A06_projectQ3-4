@@ -85,6 +85,38 @@ def normalize_obs(raw_obs):
             obs[point_start + 2] = obs[point_start + 2] / INTRUDER_POS_NORM
     return np.clip(obs, -1.0, 1.0).astype(np.float32)
 
+def normalize_obs_lite(raw_obs):
+    """Normalize a 38-dim observation down to a 30-dim observation (Adam's branch, no relative velocities)."""
+    obs = np.array(raw_obs, dtype=np.float32)
+    n = NUMBER_INTRUDERS_STATE
+    if len(obs) == 38:
+        # Downsample to 30 by removing rel_vx (20:24) and rel_vy (24:28)
+        obs = np.concatenate((obs[:5*n], obs[7*n:]))
+
+    obs[0:n]     = (obs[0:n] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
+    obs[n:2*n]   = (obs[n:2*n] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
+    obs[2*n:3*n] = obs[2*n:3*n] / INTRUDER_POS_NORM
+    obs[3*n:4*n] = obs[3*n:4*n] / INTRUDER_POS_NORM
+    obs[4*n:5*n] = obs[4*n:5*n] / np.pi
+    obs[5*n]     = (obs[5*n] - 230.0) / 30.0
+    obs[5*n+1]   = (obs[5*n+1] - 230.0) / 30.0
+    obs[5*n+2]   = (obs[5*n+2] - TARGET_DIST_NORM * 0.5) / (TARGET_DIST_NORM * 0.5)
+    # sin/cos drift at 5*n+3, 5*n+4 already in [-1,1]
+    # restricted block at 5*n+5..5*n+9
+    res_idx = 5 * n + 5
+    if res_idx + 1 < len(obs):
+        obs[res_idx+1] = (obs[res_idx+1] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
+    if res_idx + 4 < len(obs):
+        obs[res_idx+4] = obs[res_idx+4] / 250.0
+    return np.clip(obs, -1.0, 1.0).astype(np.float32)
+
+def get_normalizer(model):
+    """Auto-detect observation size and return the correct normalizer."""
+    obs_size = model.observation_space.shape[0]
+    if obs_size <= 30:
+        return normalize_obs_lite
+    return normalize_obs
+
 
 # ────────────────────────── TRAINING CURVES ──────────────────────────
 
@@ -110,8 +142,8 @@ def plot_training_curves(eval_log_path="results/eval_logs/evaluations.npz",
                     alpha=0.2, color="#2196F3")
     ax.set_xlabel("Training Steps")
     ax.set_ylabel("Mean Eval Reward")
-    ax.set_title("Training Reward Curve")
-    ax.grid(True, alpha=0.3)
+    #ax.set_title("Training Reward Curve")
+    ax.grid(True, alpha=0.3, linestyle='--')
     ax.legend()
 
     # Episode length curve
@@ -121,8 +153,8 @@ def plot_training_curves(eval_log_path="results/eval_logs/evaluations.npz",
                     alpha=0.2, color="#4CAF50")
     ax.set_xlabel("Training Steps")
     ax.set_ylabel("Mean Episode Length")
-    ax.set_title("Episode Length Curve")
-    ax.grid(True, alpha=0.3)
+    #ax.set_title("Episode Length Curve")
+    ax.grid(True, alpha=0.3, linestyle='--')
     ax.legend()
 
     plt.tight_layout()
@@ -155,9 +187,10 @@ def record_episode(model, num_flights=5, deploy_all=True, random_heading=True):
         current_actions = {}
         if deploy_all:
             agent_idx = 0
+            norm_fn = get_normalizer(model)
             for i in range(num_flights):
                 if i not in env.done:
-                    obs = normalize_obs(raw_obs_list[agent_idx])
+                    obs = norm_fn(raw_obs_list[agent_idx])
                     action, _ = model.predict(obs, deterministic=True)
                     current_actions[i] = action
                     agent_idx += 1
@@ -261,9 +294,6 @@ def plot_trajectories(model_path, num_flights=5, deploy_all=True,
     restricted_patch = mpatches.Patch(color="yellow", label="— Restricted Intrusion")
     ax.legend(handles=[start_patch, target_patch, conflict_patch, restricted_patch], loc="upper right")
 
-    mode = "All agents" if deploy_all else "Single actor"
-    ax.set_title(f"Aircraft Trajectories ({mode}, {num_flights} flights, "
-                 f"{total_conflicts} conflicts, {total_restricted_intrusions} restricted intrusions)", fontsize=13)
     ax.set_xlabel("X (km)")
     ax.set_ylabel("Y (km)")
     ax.set_aspect("equal")
@@ -305,9 +335,10 @@ def _eval_episodes_worker(model_path, episode_indices, num_flights, deploy_all, 
             current_actions = {}
             if deploy_all:
                 agent_idx = 0
+                norm_fn = get_normalizer(model)
                 for i in range(num_flights):
                     if i not in env.done:
-                        obs = normalize_obs(raw_obs_list[agent_idx])
+                        obs = norm_fn(raw_obs_list[agent_idx])
                         action, _ = model.predict(obs, deterministic=True)
                         current_actions[i] = action
                         agent_idx += 1
@@ -386,68 +417,68 @@ def plot_evaluation(model_path, n_episodes=30, num_flights=5,
 
     # Conflicts per episode
     ax = axes[0, 0]
-    ax.bar(range(len(metrics["conflicts"])), metrics["conflicts"], color="#F44336", alpha=0.7)
-    ax.axhline(np.mean(metrics["conflicts"]), color="black", linestyle="--",
-               label=f"Mean: {np.mean(metrics['conflicts']):.1f}")
+    ax.bar(range(len(metrics["conflicts"])), metrics["conflicts"], color="#F44336", alpha=0.5, edgecolor="#D32F2F")
+    mean_cf = np.mean(metrics["conflicts"])
+    ax.axhline(mean_cf, color="black", linestyle="--", linewidth=1)
+    ax.annotate(f"\u03bc={mean_cf:.2f}", xy=(0.95, mean_cf), xycoords=('axes fraction', 'data'),
+                ha='right', va='bottom', fontsize=9)
     ax.set_xlabel("Episode")
-    ax.set_ylabel("Conflicts")
-    ax.set_title("Conflicts per Episode")
-    ax.legend()
+    ax.set_ylabel("Number of Conflicts")
+    ax.text(0.02, 0.95, '(a)', transform=ax.transAxes, fontsize=12, fontweight='bold', va='top')
+    ax.grid(True, alpha=0.3, linestyle='--')
 
     # Targets reached (with mean and max)
     ax = axes[0, 1]
     ax.bar(range(len(metrics["targets_reached"])), metrics["targets_reached"],
-           color="#4CAF50", alpha=0.7)
+           color="#4CAF50", alpha=0.5, edgecolor="#388E3C")
     mean_targets = np.mean(metrics["targets_reached"])
-    ax.axhline(mean_targets, color="blue", linestyle="--", linewidth=2,
-               label=f"Mean: {mean_targets:.1f}")
-    ax.axhline(num_flights, color="black", linestyle="--", linewidth=2, 
-               label=f"Max: {num_flights}")
+    ax.axhline(mean_targets, color="black", linestyle="--", linewidth=1,
+               label=f"Mean = {mean_targets:.2f}")
+    ax.axhline(num_flights, color="gray", linestyle="--", linewidth=1, alpha=0.5,
+               label=f"Maximum = {num_flights}")
     ax.set_xlabel("Episode")
     ax.set_ylabel("Targets Reached")
-    ax.set_title("Targets Reached per Episode")
     ax.set_ylim(0, num_flights + 1)
-    ax.legend()
+    ax.legend(loc='lower left', fontsize=8)
+    ax.text(0.02, 0.95, '(b)', transform=ax.transAxes, fontsize=12, fontweight='bold', va='top')
+    ax.grid(True, alpha=0.3, linestyle='--')
 
     # Restricted Intrusions per episode
     ax = axes[0, 2]
-    ax.bar(range(len(metrics["restricted_intrusions"])), metrics["restricted_intrusions"], color="#8E24AA", alpha=0.7)
-    ax.axhline(np.mean(metrics["restricted_intrusions"]), color="black", linestyle="--",
-               label=f"Mean: {np.mean(metrics['restricted_intrusions']):.2f}")
+    ax.bar(range(len(metrics["restricted_intrusions"])), metrics["restricted_intrusions"], color="#CE93D8", alpha=0.7, edgecolor="#8E24AA")
+    mean_ri = np.mean(metrics["restricted_intrusions"])
+    ax.axhline(mean_ri, color="black", linestyle="--", linewidth=1)
+    ax.annotate(f"\u03bc={mean_ri:.2f}", xy=(0.95, mean_ri), xycoords=('axes fraction', 'data'),
+                ha='right', va='bottom', fontsize=9)
     ax.set_xlabel("Episode")
-    ax.set_ylabel("Intrusions")
-    ax.set_title("Restricted Area Violations")
-    ax.legend()
+    ax.set_ylabel("Restricted Zone Intrusions")
+    ax.text(0.02, 0.95, '(c)', transform=ax.transAxes, fontsize=12, fontweight='bold', va='top')
+    ax.grid(True, alpha=0.3, linestyle='--')
 
-    # Episode length distribution
-    ax = axes[0, 2]
-    ax.hist(metrics["episode_length"], bins=20, color="#2196F3", alpha=0.7, edgecolor="black")
-    ax.set_xlabel("Episode Length (RL steps)")
-    ax.set_ylabel("Count")
-    ax.set_title("Episode Length Distribution")
-
-    # Average drift per episode
-    ax = axes[1, 0]
-    ax.bar(range(len(metrics["total_drift"])), metrics["total_drift"], color="#FF9800", alpha=0.7)
-    ax.axhline(np.mean(metrics["total_drift"]), color="black", linestyle="--",
-               label=f"Mean: {np.mean(metrics['total_drift']):.1f}")
-    ax.set_xlabel("Episode")
-    ax.set_ylabel("Total Drift (rad)")
-    ax.set_title("Cumulative Drift per Episode")
-    ax.legend()
-    
-    # Hide the unused 6th subplot
-    axes[1, 2].axis('off')
-
-    # Restricted airspace intrusions per episode
+    # Episode length distribution — override axes[0,2] is removed, use axes[1,0] area
+    # Actually this was overwriting axes[0,2] — fix: use axes[1,1] for episode length
     ax = axes[1, 1]
-    ax.bar(range(len(metrics["restricted_intrusions"])), metrics["restricted_intrusions"], color="#9C27B0", alpha=0.7)
-    ax.axhline(np.mean(metrics["restricted_intrusions"]), color="black", linestyle="--",
-               label=f"Mean: {np.mean(metrics['restricted_intrusions']):.1f}")
+    ax.hist(metrics["episode_length"], bins=20, color="#64B5F6", alpha=0.7, edgecolor="#1565C0")
+    ax.axvline(np.mean(metrics["episode_length"]), color='black', linestyle='--', linewidth=1)
+    ax.set_xlabel("Episode Length (steps)")
+    ax.set_ylabel("Frequency")
+    ax.text(0.02, 0.95, '(d)', transform=ax.transAxes, fontsize=12, fontweight='bold', va='top')
+    ax.grid(True, alpha=0.3, linestyle='--')
+
+    ax = axes[1, 0]
+    ax.bar(range(len(metrics["total_drift"])), metrics["total_drift"], color="#FFB74D", alpha=0.7, edgecolor="#F57C00")
+    mean_drift = np.mean(metrics["total_drift"])
+    ax.axhline(mean_drift, color="black", linestyle="--", linewidth=1)
+    ax.annotate(f"\u03bc={mean_drift:.2f}", xy=(0.95, mean_drift), xycoords=('axes fraction', 'data'),
+                ha='right', va='bottom', fontsize=9)
     ax.set_xlabel("Episode")
-    ax.set_ylabel("Restricted Intrusions")
-    ax.set_title("Restricted Airspace Intrusions per Episode")
-    ax.legend()
+    ax.set_ylabel("Cumulative Drift (radians)")
+    ax.text(0.02, 0.95, '(e)', transform=ax.transAxes, fontsize=12, fontweight='bold', va='top')
+    ax.grid(True, alpha=0.3, linestyle='--')
+    
+    # Restricted intrusions — now in axes[1,2] (was axes[1,1] which is now episode length)
+    # Remove duplicated restricted intrusions plot since it's already in (c)
+    axes[1, 2].axis('off')
 
     # Summary statistics text
     ax = axes[1, 2]
@@ -470,30 +501,23 @@ def plot_evaluation(model_path, n_episodes=30, num_flights=5,
 
     # Matplotlib summary text block
     summary_text = (
-        f"Evaluation Summary\n"
-        f"{'═' * 30}\n"
+        f"Performance Metrics\n"
+        f"{'═' * 40}\n"
+        f"{'Metric':<22}{'Mean':>8}{'Rate':>10}\n"
+        f"{'-' * 40}\n"
+        f"{'Conflicts':<22}{np.mean(metrics['conflicts']):>8.3f}{100*conflict_free/n_episodes:>9.1f}%\n"
+        f"{'Targets Reached':<22}{mean_targets:>8.3f}{100*mean_targets/num_flights:>9.1f}%\n"
+        f"{'Restricted Intrusions':<22}{np.mean(metrics['restricted_intrusions']):>8.3f}{100*restricted_free/n_episodes:>9.1f}%\n"
+        f"{'Episode Length':<22}{np.mean(metrics['episode_length']):>8.1f}{'steps':>10}\n"
+        f"{'Drift':<22}{np.mean(metrics['total_drift']):>8.3f}{'rad':>10}\n"
+        f"{'═' * 40}\n\n"
         f"Episodes: {n_episodes}\n"
-        f"Num Flights: {num_flights}\n\n"
-        f"Conflicts:\n"
-        f"  Mean: {np.mean(metrics['conflicts']):.2f}\n"
-        f"  Conflict-free: {conflict_free}/{n_episodes} ({100*conflict_free/n_episodes:.1f}%)\n\n"
-        f"Targets Reached:\n"
-        f"  Mean: {mean_targets:.2f}/{num_flights}\n"
-        f"  Max: {np.max(metrics['targets_reached']):.0f}\n\n"
-        f"Restricted Intrusions:\n"
-        f"  Mean: {np.mean(metrics['restricted_intrusions']):.2f}\n"
-        f"  Intrusion-free: {restricted_free}/{n_episodes} ({100*restricted_free/n_episodes:.1f}%)\n\n"
-        f"Drift:\n"
-        f"  Mean: {np.mean(metrics['total_drift']):.2f} rad"
+        f"Aircraft: {num_flights}"
     )
-    ax.text(0.1, 0.5, summary_text, fontsize=10, verticalalignment="center",
+    ax.text(0.1, 0.5, summary_text, fontsize=9, verticalalignment="center",
             fontfamily="monospace", bbox=dict(boxstyle="round", facecolor="wheat", alpha=0.5))
 
-    fig.suptitle(f"Evaluation Summary — Conflicts: {np.mean(metrics['conflicts']):.2f}/ep | "
-                 f"Restricted: {np.mean(metrics['restricted_intrusions']):.2f}/ep",
-                 fontsize=14, fontweight="bold")
-
-    plt.tight_layout()
+    fig.tight_layout()
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     plt.savefig(save_path, dpi=150, bbox_inches="tight")
     print(f"Saved evaluation plot to {save_path}")
@@ -570,32 +594,32 @@ def compare_checkpoints(checkpoint_dir="results/checkpoints/",
     ax.plot(steps, mean_conflicts, "o-", color="#F44336", linewidth=2, markersize=6)
     ax.set_xlabel("Training Steps")
     ax.set_ylabel("Mean Conflicts / Episode")
-    ax.set_title("Conflict Rate vs Training")
-    ax.grid(True, alpha=0.3)
+    #ax.set_title("Conflict Rate vs Training")
+    ax.grid(True, alpha=0.3, linestyle='--')
     
     ax = axes[1]
     ax.plot(steps, mean_restricted, "o-", color="#8E24AA", linewidth=2, markersize=6)
     ax.set_xlabel("Training Steps")
     ax.set_ylabel("Restricted Intrusions / Ep")
-    ax.set_title("Restricted Area Violations vs Training")
-    ax.grid(True, alpha=0.3)
+    #ax.set_title("Restricted Area Violations vs Training")
+    ax.grid(True, alpha=0.3, linestyle='--')
 
     ax = axes[2]
     ax.plot(steps, mean_targets, "o-", color="#4CAF50", linewidth=2, markersize=6)
     ax.axhline(num_flights, color="black", linestyle="--", alpha=0.5)
     ax.set_xlabel("Training Steps")
     ax.set_ylabel("Mean Targets Reached")
-    ax.set_title("Target Completion vs Training")
+    #ax.set_title("Target Completion vs Training")
     ax.set_ylim(0, num_flights + 1)
-    ax.grid(True, alpha=0.3)
+    ax.grid(True, alpha=0.3, linestyle='--')
 
     ax = axes[3]
     ax.plot(steps, conflict_free_pct, "o-", color="#2196F3", linewidth=2, markersize=6)
     ax.set_xlabel("Training Steps")
     ax.set_ylabel("Conflict-Free Episodes (%)")
-    ax.set_title("Safety Rate vs Training")
+    #ax.set_title("Safety Rate vs Training")
     ax.set_ylim(0, 105)
-    ax.grid(True, alpha=0.3)
+    ax.grid(True, alpha=0.3, linestyle='--')
 
     plt.tight_layout()
     os.makedirs(os.path.dirname(save_path), exist_ok=True)

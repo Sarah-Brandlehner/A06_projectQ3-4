@@ -21,7 +21,7 @@ YELLOW = [255, 255, 0]
 
 # Position uncertainty vars
 ENABLE_POSITION_UNCERTAINTY = False
-PROB_POSITION_UNCERTAINTY = 0.2
+PROB_POSITION_UNCERTAINTY = 0.8 # 0.2
 MAG_POSITION_UNCERTAINTY = 500 # m
 
 # Wind
@@ -32,7 +32,7 @@ MAXIMUM_WIND_SPEED = 30 # m/s
 # Delay
 ENABLE_DELAY = False
 MAXIMUM_DELAY = 3 # s
-PROB_DELAY = 0.1
+PROB_DELAY = 0.8#0.1
 
 NUMBER_INTRUDERS_STATE = 4  # changed from 2 to prevent blind spot collisions
 MAX_DISTANCE = 250*u.nm
@@ -65,6 +65,7 @@ class Environment(gym.Env):
         self.max_episode_len = max_episode_len
         self.distance_init_buffer = distance_init_buffer
         self.random_init_heading = random_init_heading
+        self.fixed_geometries = kwargs.get('fixed_geometries', False)
         self.dt = dt
 
         # tolerance to consider that the target has been reached (in meters)
@@ -79,6 +80,21 @@ class Environment(gym.Env):
         self.done = set()  # set of flights that reached the target
         self.restricted_airspace_intrusions = set()  # set of flights in restricted airspace
         self.i = None
+        
+        # Testing Variables
+        self.enable_position_uncertainty = kwargs.get('enable_position_uncertainty', False)
+        self.prob_position_uncertainty = kwargs.get('prob_position_uncertainty', 0.2)
+        self.mag_position_uncertainty = kwargs.get('mag_position_uncertainty', 500.0)
+        
+        self.enable_wind = kwargs.get('enable_wind', False)
+        self.min_wind_speed = kwargs.get('min_wind_speed', 0.0)
+        self.max_wind_speed = kwargs.get('max_wind_speed', 30.0)
+        
+        self.enable_delay = kwargs.get('enable_delay', False)
+        self.prob_delay = kwargs.get('prob_delay', 0.1)
+        self.max_delay = kwargs.get('max_delay', 3.0)
+        
+        self.restricted_area_ratio = kwargs.get('restricted_area_ratio', 0.20)
         
         # Get the random wind direction and intensity for this episode
         self.wind_magnitude = random.randint(MINIMUM_WIND_SPEED, MAXIMUM_WIND_SPEED)
@@ -101,8 +117,8 @@ class Environment(gym.Env):
         return None
 
     def reward(self) -> List:
-        drifts = self.drift_penalties() * 0.7
-        conflicts = self.conflict_penalties() * -10.0
+        drifts = self.drift_penalties() * 0.6
+        conflicts = self.conflict_penalties() * -20.0
         
         # New: Radial Approach Penalty
         # Punishment = (Approach Velocity) / (Distance)
@@ -112,7 +128,7 @@ class Environment(gym.Env):
             if i not in self.done:
                 dist, _, _, approach = f.closest_restricted_point(self.restricted_airspace)
                 if f.in_restricted_airspace(self.restricted_airspace):
-                    restricted_penalties[i] -= 1.0 # Keep the hard penalty for being inside
+                    restricted_penalties[i] -= -10.0 # Keep the hard penalty for being inside
                 
                 # Only "nudge" them if they are within 3000m (approx 1.6 nm) 
                 # AND flying toward the boundary.
@@ -133,13 +149,13 @@ class Environment(gym.Env):
             if i not in self.done:
                 dist, _, _, approach = f.closest_restricted_point(self.restricted_airspace)
                 if f.in_restricted_airspace(self.restricted_airspace):
-                    restricted_p[i] = -1.0
+                    restricted_p[i] = -10.0
                 elif dist < 3000 and approach > 0:
                     shield_p[i] = -(approach / 3000) * 0.1
 
         return {
-            "drift":     self.drift_penalties() * 0.7,
-            "conflict":  self.conflict_penalties() * -10.0,
+            "drift":     self.drift_penalties() * 0.6,
+            "conflict":  self.conflict_penalties() * -20.0,
             "restricted": restricted_p,
             "shield":    shield_p,
             "alert":     self.alert_penalties() * 0.0,
@@ -435,23 +451,23 @@ class Environment(gym.Env):
     def update_positions(self) -> None:
         for i, f in enumerate(self.flights):
             if i not in self.done:
-                if ENABLE_WIND:
+                if self.enable_wind:
                     dx, dy = apply_wind(f, self.wind_magnitude, self.wind_direction)
                 else:
                     dx, dy = f.components
 
                 position = f.position
 
-                if ENABLE_DELAY:
-                    newx, newy = apply_position_delay(f, PROB_DELAY, MAXIMUM_DELAY, self.dt, dx, dy)
+                if self.enable_delay:
+                    newx, newy = apply_position_delay(f, self.prob_delay, self.max_delay, self.dt, dx, dy)
                 else:
                     newx = position.x + dx * self.dt
                     newy = position.y + dy * self.dt
                 f.position = Point(newx, newy)
                 
-                if ENABLE_POSITION_UNCERTAINTY:
-                    f.reported_position = position_scramble(f.position, PROB_POSITION_UNCERTAINTY, 
-                                                0, MAG_POSITION_UNCERTAINTY)
+                if self.enable_position_uncertainty:
+                    f.reported_position = position_scramble(f.position, self.prob_position_uncertainty, 
+                                                0, self.mag_position_uncertainty)
                 else:
                     f.reported_position = f.position
                     
@@ -483,14 +499,24 @@ class Environment(gym.Env):
             speed_dif = np.append(speed_dif, abs(f.airspeed - f.optimal_airspeed))
         self.average_speed_dif = np.average(speed_dif)
 
-    def reset(self, number_flights_training) -> List:
-        self.airspace = Airspace.random(self.min_area, self.max_area)
-        self.restricted_airspace = RestrictedAirspace.random(self.min_area, self.max_area)
-        self.num_flights = number_flights_training
+    def reset(self, number_flights_training=None) -> List:
+        if not self.fixed_geometries or self.airspace is None:
+            self.airspace = Airspace.random(self.min_area, self.max_area)
+            # Calculate scale factor for restricted airspace based on requested area ratio
+            scale_factor = math.sqrt(self.restricted_area_ratio) 
+            self.restricted_airspace = RestrictedAirspace.random(self.min_area, self.max_area, scale_factor=scale_factor)
+            
+        
+        if self.enable_wind:
+            self.wind_magnitude = random.uniform(self.min_wind_speed, self.max_wind_speed)
+            self.wind_direction = random.uniform(0, 360)
+            
+        self.num_flights = number_flights_training if number_flights_training is not None else self.num_flights
         self.flights = []
         tol = self.distance_init_buffer * self.tol
         min_distance = self.distance_init_buffer * self.min_distance
         
+        attempts = 0
         while len(self.flights) < self.num_flights:
             valid = True
             candidate = Flight.random(self.airspace, self.min_speed, self.max_speed, tol, random_init_heading=self.random_init_heading, restricted_airspace=self.restricted_airspace)
@@ -501,6 +527,12 @@ class Environment(gym.Env):
                     break
             if valid:
                 self.flights.append(candidate)
+                attempts = 0
+            else:
+                attempts += 1
+                if attempts > 50:
+                    min_distance *= 0.95 # backoff requirements
+                    attempts = 0
 
         self.i = 0
         self.conflicts = set()

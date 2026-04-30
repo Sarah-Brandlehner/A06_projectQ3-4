@@ -60,6 +60,38 @@ def normalize_obs(raw_obs):
 
     return np.clip(obs, -1.0, 1.0).astype(np.float32)
 
+def normalize_obs_lite(raw_obs):
+    """Normalize a 38-dim observation down to a 30-dim observation (Adam's branch, no relative velocities)."""
+    obs = np.array(raw_obs, dtype=np.float32)
+    n = NUMBER_INTRUDERS_STATE
+    if len(obs) == 38:
+        # Downsample to 30 by removing rel_vx (20:24) and rel_vy (24:28)
+        obs = np.concatenate((obs[:5*n], obs[7*n:]))
+
+    obs[0:n]     = (obs[0:n] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
+    obs[n:2*n]   = (obs[n:2*n] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
+    obs[2*n:3*n] = obs[2*n:3*n] / INTRUDER_POS_NORM
+    obs[3*n:4*n] = obs[3*n:4*n] / INTRUDER_POS_NORM
+    obs[4*n:5*n] = obs[4*n:5*n] / np.pi
+    obs[5*n]     = (obs[5*n] - 230.0) / 30.0
+    obs[5*n+1]   = (obs[5*n+1] - 230.0) / 30.0
+    obs[5*n+2]   = (obs[5*n+2] - TARGET_DIST_NORM * 0.5) / (TARGET_DIST_NORM * 0.5)
+    # sin/cos drift at 5*n+3, 5*n+4 already in [-1,1]
+    # restricted block at 5*n+5..5*n+9
+    res_idx = 5 * n + 5
+    if res_idx + 1 < len(obs):
+        obs[res_idx+1] = (obs[res_idx+1] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
+    if res_idx + 4 < len(obs):
+        obs[res_idx+4] = obs[res_idx+4] / 250.0
+    return np.clip(obs, -1.0, 1.0).astype(np.float32)
+
+def get_normalizer(model):
+    """Auto-detect observation size and return the correct normalizer."""
+    obs_size = model.observation_space.shape[0]
+    if obs_size <= 30:
+        return normalize_obs_lite
+    return normalize_obs
+
 
 def evaluate_single_actor(model_path: str, n_episodes: int = 10, num_flights: int = 5):
     """Standard single-actor evaluation (only agent 0 controlled)."""
@@ -120,9 +152,10 @@ def evaluate_all_agents(model_path: str, n_episodes: int = 10, num_flights: int 
             # Get action for EACH active agent from the same model
             actions = np.zeros((n_active, 2), dtype=np.float32)
             agent_idx = 0
+            norm_fn = get_normalizer(model)
             for i in range(len(env.flights)):
                 if i not in env.done:
-                    obs = normalize_obs(raw_obs_list[agent_idx])
+                    obs = norm_fn(raw_obs_list[agent_idx])
                     action, _ = model.predict(obs, deterministic=True)
                     actions[agent_idx] = action
                     agent_idx += 1
