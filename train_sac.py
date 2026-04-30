@@ -7,10 +7,17 @@ heading + speed actions, 2 closest intruders in observation.
 # USE THE NUMBER OF CORES YOUR CPU HAS
 Usage:
     
+<<<<<<< Updated upstream
     python train_sac.py --timesteps 4000000 --num-flights 10 --num-envs 16 --train-all --run-name "finalhopefully"
 
     python train_sac.py --timesteps 4000000 --num-flights 10 --num-envs 16 --train-all --run-name "finalhopefully" --load "results/finalhopefully/best_model/best_model.zip"
+=======
+    python train_sac.py --timesteps 4000000 --num-flights 10 --num-envs 24 --train-all --run-name "jan_1"
+
+    python train_sac.py --timesteps 4000000 --num-flights 10 --num-envs 24 --train-all --run-name "jan_3" --load "results/jan_2/best_model/best_model.zip"
+>>>>>>> Stashed changes
 """
+#jan_1 finished at 3M steps
 import argparse
 import os
 import numpy as np

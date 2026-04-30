@@ -27,9 +27,9 @@ Commands:
 
     python visualize.py evaluate --run-dir results/4_intruders_unlocked_physics --no-random-heading
     python visualize.py evaluate --run-dir results/minimal_reward_ALL_AGENTS --no-random-heading --workers 8
-    python visualize.py evaluate --run-dir results/minimal_reward_ALL_AGENTS --no-random-heading --workers 8 --episodes 100
+    python visualize.py evaluate --run-dir results/jan_3 --no-random-heading --workers 24 --episodes 1000
     
-    python visualize.py compare --run-dir results/minimal_reward_ALL_AGENTS --no-random-heading
+    python visualize.py compare --run-dir results/jan_3 --no-random-heading
 
 """
 import argparse
