@@ -13,10 +13,10 @@ Commands:
     To run the visualization in a specific run directory, use the --run-dir argument:
 
     python visualize.py compare --run-dir results/test_03drift_40conflict
-    python visualize.py evaluate --run-dir results/nospawninra --workers 8 --episodes 1000 --no-random-heading
-    python visualize.py training --run-dir results/expanded_obs_matrix_4
-    python visualize.py trajectory --run-dir results/nospawninra
-    python visualize.py compare --run-dir results/alert_shared_reward_ALL_AGENTS
+    python visualize.py evaluate --run-dir results/thisone --workers 8 --episodes 2000 --no-random-heading
+    python visualize.py training --run-dir results/thisone --workers 16 --no-random-heading
+    python visualize.py trajectory --run-dir results/thisone --no-random-heading
+    python visualize.py compare --run-dir results/thisone --workers 16 --no-random-heading
     python visualize.py evaluate --run-dir results/minimal_reward_ALL_AGENTS
     python visualize.py training --run-dir results/test_03drift_40conflict
     python visualize.py trajectory --run-dir results/minimal_reward_ALL_AGENTS
@@ -297,7 +297,7 @@ def plot_trajectories(model_path, num_flights=5, deploy_all=True,
 
     # Legend with custom patches
     start_patch = mpatches.Patch(color="#757575", label="● Start position")
-    target_patch = mpatches.Patch(color="#757575", label="★ Target")
+    target_patch = mpatches.Patch(color="#757575", label="* Target")
     conflict_patch = mpatches.Patch(color="#B71C1C", label="— Conflict (severity high)")
     restricted_patch = mpatches.Patch(color="#F9A825", label="— Restricted intrusion")
     normal_patch = mpatches.Patch(color="#757575", label="— Normal flight path")
