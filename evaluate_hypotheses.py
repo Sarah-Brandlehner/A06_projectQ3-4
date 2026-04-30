@@ -12,6 +12,41 @@ from concurrent.futures import ProcessPoolExecutor
 from atcenv.env import Environment, NUMBER_INTRUDERS_STATE
 from visualize import normalize_obs
 
+
+"""
+Usage:
+    python evaluate_hypotheses.py <mode> --run-dir <path>
+
+Commands (Modes):
+    python evaluate_hypotheses.py airspace-sweep         # Run airspace area sweep (Hypothesis B)
+    python evaluate_hypotheses.py density-sweep          # Run traffic density sweep (Hypothesis D)
+    python evaluate_hypotheses.py uncertainty-ablation   # Run environmental uncertainty ablation (Hypothesis C)
+    python evaluate_hypotheses.py heatmap                # Generate spatial density heatmap (spaghetti plot)
+    python evaluate_hypotheses.py reward-progress        # Plot incremental reward shaping progress (Hypothesis E)
+    python evaluate_hypotheses.py all                    # Run all available hypothesis evaluations
+
+    To evaluate hypotheses on a specific model, use the --run-dir argument:
+    
+    python evaluate_hypotheses.py airspace-sweep --run-dir results/best_model_run
+    python evaluate_hypotheses.py density-sweep --run-dir results/test_03drift_40conflict
+    python evaluate_hypotheses.py heatmap --run-dir results/minimal_reward_ALL_AGENTS
+    python evaluate_hypotheses.py all --run-dir results/expanded_obs_matrix_4
+
+    You can specify the number of episodes to run per condition using the --episodes argument (default is 100):
+    
+    python evaluate_hypotheses.py uncertainty-ablation --run-dir results/best_model_run --episodes 50
+    python evaluate_hypotheses.py density-sweep --run-dir results/basic_policy --episodes 200
+
+    To evaluate using a specific baseline model (like Adam's 30-dim obs model), use --baseline-model instead of --run-dir:
+    
+    python evaluate_hypotheses.py all --baseline-model results/adams_baseline
+
+    To plot the reward progression (Hypothesis E), you must provide the Tensorboard log directories instead of a run directory:
+    
+    python evaluate_hypotheses.py reward-progress --incremental-dir results/incremental_logs --baseline-dir results/baseline_logs
+
+"""
+
 ACTION_FREQUENCY = 15
 
 # --- Normalization for Adam's 30-dim observation (no relative velocities) ---
