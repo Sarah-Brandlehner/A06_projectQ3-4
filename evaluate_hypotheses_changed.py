@@ -27,10 +27,10 @@ Commands (Modes):
 
     To evaluate hypotheses on a specific model, use the --run-dir argument:
     
-    python evaluate_hypotheses.py airspace-sweep --run-dir results/thisone
-    python evaluate_hypotheses.py density-sweep --run-dir results/thisone
+    python evaluate_hypotheses_changed.py airspace-sweep --run-dir results/thisone
+    python evaluate_hypotheses_changed.py density-sweep --run-dir results/thisone
     python evaluate_hypotheses_changed.py heatmap --run-dir results/thisone --episodes 2
-    python evaluate_hypotheses.py all --run-dir results/thisone
+    python evaluate_hypotheses_changed.py all --run-dir results/thisone
 
     You can specify the number of episodes to run per condition using the --episodes argument (default is 100):
     
@@ -49,50 +49,43 @@ Commands (Modes):
 
 ACTION_FREQUENCY = 5
 
-# --- Normalization for Adam's 30-dim observation (no relative velocities) ---
+# --- Normalization constants ---
 INTRUDER_DIST_NORM = 50000.0
 INTRUDER_POS_NORM = 13000.0
 TARGET_DIST_NORM = 200000.0
 
-def normalize_obs_lite(raw_obs):
-    """Normalize a 38-dim observation down to a 30-dim observation (Adam's branch, no relative velocities)."""
+def normalize_obs_standard(raw_obs):
+    """
+    Standard Normalizer for 30-dim observation.
+    Aligns exactly with the output of Environment.observation().
+    Layout: [intruder_data (20)] [ownship_state (5)] [restricted_airspace (5)]
+    """
     obs = np.array(raw_obs, dtype=np.float32)
-    n = NUMBER_INTRUDERS_STATE
-    if len(obs) == 38:
-        # Downsample to 30 by removing rel_vx (20:24) and rel_vy (24:28)
-        obs = np.concatenate((obs[:5*n], obs[7*n:]))
+    n = 4  # NUMBER_INTRUDERS_STATE
 
+    # 1. Intruder Data (Indices 0 to 19)
     obs[0:n]     = (obs[0:n] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
     obs[n:2*n]   = (obs[n:2*n] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
     obs[2*n:3*n] = obs[2*n:3*n] / INTRUDER_POS_NORM
     obs[3*n:4*n] = obs[3*n:4*n] / INTRUDER_POS_NORM
     obs[4*n:5*n] = obs[4*n:5*n] / np.pi
-    obs[5*n]     = (obs[5*n] - 230.0) / 30.0
-    obs[5*n+1]   = (obs[5*n+1] - 230.0) / 30.0
-    obs[5*n+2]   = (obs[5*n+2] - TARGET_DIST_NORM * 0.5) / (TARGET_DIST_NORM * 0.5)
-    # sin/cos drift at 5*n+3, 5*n+4 already in [-1,1]
-    # restricted block at 5*n+5..5*n+9
-    res_idx = 5 * n + 5
-    if res_idx + 1 < len(obs):
-        obs[res_idx+1] = (obs[res_idx+1] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
-    if res_idx + 4 < len(obs):
-        obs[res_idx+4] = obs[res_idx+4] / 250.0
+
+    # 2. Ownship State (Indices 20 to 24)
+    # 20: Airspeed, 21: Optimal, 22: Target Dist
+    obs[20] = (obs[20] - 230.0) / 30.0
+    obs[21] = (obs[21] - 230.0) / 30.0
+    obs[22] = (obs[22] - TARGET_DIST_NORM * 0.5) / (TARGET_DIST_NORM * 0.5)
+    # 23: Sin Drift, 24: Cos Drift (Already [-1, 1])
+
+    # 3. Restricted Airspace Block (Indices 25 to 29)
+    # 25: in_restricted (flag, no norm)
+    # 26: Distance
+    obs[26] = (obs[26] - INTRUDER_DIST_NORM) / (INTRUDER_DIST_NORM * 0.3)
+    # 27: Sin Bearing, 28: Cos Bearing (Already [-1, 1])
+    # 29: Approach Rate
+    obs[29] = obs[29] / 250.0
+
     return np.clip(obs, -1.0, 1.0).astype(np.float32)
-
-def get_normalizer(model):
-    """Auto-detect observation size and return the correct normalizer."""
-    obs_size = model.observation_space.shape[0]
-    if obs_size <= 30:
-        return normalize_obs_lite
-    return normalize_obs
-
-# Global reference set by main, used by workers
-_USE_LITE_NORM = False
-
-def _get_norm_fn():
-    if _USE_LITE_NORM:
-        return normalize_obs_lite
-    return normalize_obs
 
 def run_episode(model, env_kwargs, num_flights=10, norm_fn=None):
     """
@@ -100,7 +93,7 @@ def run_episode(model, env_kwargs, num_flights=10, norm_fn=None):
     Measures drift once per decision step to prevent inflated metrics.
     """
     if norm_fn is None:
-        norm_fn = get_normalizer(model)
+        norm_fn = normalize_obs_standard
         
     env_kwargs['random_init_heading'] = False
     env = Environment(num_flights=num_flights, **env_kwargs)
@@ -122,14 +115,13 @@ def run_episode(model, env_kwargs, num_flights=10, norm_fn=None):
             break
 
         for idx, agent_num in enumerate(active_indices):
-            # Normalizer handles 38 -> 30 conversion internally
+            # Use the standard normalizer
             obs = norm_fn(raw_obs_list[idx])
             action, _ = model.predict(obs, deterministic=True)
             current_actions[agent_num] = action
 
         # 2. PHYSICS STEPS: Step the environment ACTION_FREQUENCY times
         for sub_step in range(ACTION_FREQUENCY):
-            # Must rebuild active list because someone might reach target mid-frequency
             active_now = [i for i in range(num_flights) if i not in env.done]
             if not active_now:
                 done = True
@@ -137,14 +129,10 @@ def run_episode(model, env_kwargs, num_flights=10, norm_fn=None):
                 
             env_actions = np.zeros((len(active_now), 2), dtype=np.float32)
             
-            # Apply the delta-turn ONLY on the first sub-step (prevents wide circles)
-            if sub_step == 0:
-                for idx, agent_num in enumerate(active_now):
-                    env_actions[idx] = current_actions.get(agent_num, [0.0, 0.0])
-            else:
-                # Sub-steps 1 to N: aircraft fly straight on their new course
-                env_actions.fill(0.0)
-
+            # Apply the SAME action for all ACTION_FREQUENCY steps (matches training wrapper)
+            for idx, agent_num in enumerate(active_now):
+                env_actions[idx] = current_actions.get(agent_num, [0.0, 0.0])
+            
             raw_obs_list, rewards, done_t, done_e, info = env.step(env_actions)
             
             # Record safety violations that happen during any sub-step
@@ -174,11 +162,10 @@ def eval_worker(model_path, env_kwargs, num_flights, episodes):
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppress TF warnings in workers
     from stable_baselines3 import SAC
     model = SAC.load(model_path)
-    norm_fn = get_normalizer(model)
     
     cfs_list = []; ifs_list = []; drifts = []
     for _ in range(episodes):
-        cf, inf, _, d = run_episode(model, env_kwargs, num_flights, norm_fn=norm_fn)
+        cf, inf, _, d = run_episode(model, env_kwargs, num_flights, norm_fn=normalize_obs_standard)
         cfs_list.append((cf / num_flights) * 100)
         ifs_list.append((inf / num_flights) * 100)
         drifts.append(d)
@@ -226,7 +213,6 @@ def sweep_airspace(model_path, out_dir, episodes, default_flights=10):
     ax1.set_ylim([-2, ylim_max])
     ax2.set_ylim([-2, ylim_max])
     
-    #plt.title("Hypothesis B: Robustness Against Enlarged Restricted Airspace", pad=15)
     fig.tight_layout()
     plt.savefig(os.path.join(out_dir, "airspace_sweep.png"), dpi=200, bbox_inches='tight')
     plt.close()
@@ -276,7 +262,6 @@ def sweep_density(model_path, out_dir, episodes):
     if ylim[1] < 25: ax.set_ylim([-2, 25])
     
     ax.legend(loc='upper left')
-    #plt.title("Hypothesis D: Operational Limit vs Traffic Density", pad=15)
     fig.tight_layout()
     plt.savefig(os.path.join(out_dir, "density_sweep.png"), dpi=200, bbox_inches='tight')
     plt.close()
@@ -319,7 +304,6 @@ def sweep_uncertainties(model_path, out_dir, episodes, default_flights=10):
     rects2 = ax.bar(x + width/2, if_rates, width, yerr=[if_lower_error, if_stds], capsize=4, label='Intrusion Rate', color='#ffbb78', edgecolor='#ff7f0e')
 
     ax.set_ylabel('Flights with Errors (%)')
-    #ax.set_title('Hypothesis C: Ablation Study of Environmental Uncertainties')
     ax.set_xticks(x)
     ax.set_xticklabels(names, rotation=15)
     ax.legend(loc='lower right')
@@ -336,80 +320,99 @@ def sweep_uncertainties(model_path, out_dir, episodes, default_flights=10):
 
 def generate_heatmap(model, out_dir, episodes, default_flights=10):
     """
-    Corrected: Uses norm_fn correctly to prevent 38 vs 30 dimension crash.
-    Keeps fixed geometry for a clean spaghetti plot.
-    Applies steering ONLY on first sub-step, then flies straight.
+    Generate Heatmap with fixed geometry and target-facing initialization.
+    Aircraft start facing their targets to match training behavior.
     """
-    print(f"Generating Spatial Density Heatmap ({episodes} episodes)...")
-    env_kwargs = {'restricted_area_ratio': 0.20, 'fixed_geometries': True, 'random_init_heading': False}
+    print(f"Generating Heatmap ({episodes} episodes on fixed airspace)...")
+    env = Environment(num_flights=default_flights, random_init_heading=False)
     
-    all_trajectories = []
-    env = Environment(num_flights=default_flights, **env_kwargs)
+    # Initialize fixed geometry - ONE reset to lock airspace
+    env.reset(default_flights)
+    fix_air, fix_res = env.airspace, env.restricted_airspace
     
-    # Select the correct normalizer based on what the loaded model expects
-    norm_fn = get_normalizer(model)
-    
+    all_traj = []
     for _ in tqdm(range(episodes), desc="Heatmap Episodes"):
-        raw_obs_list = env.reset(default_flights)
+        # Reuse fixed airspace for this episode
+        env.airspace = fix_air
+        env.restricted_airspace = fix_res
+        env.flights = []
+        env.done = set()
+        env.i = 0
+        env.conflicts = set()
+        env.restricted_airspace_intrusions = set()
+        
+        # Generate flights that start facing their targets (random_init_heading=False)
+        from atcenv.definitions import Flight
+        tol = env.distance_init_buffer * env.tol
+        min_distance = env.distance_init_buffer * env.min_distance
+        while len(env.flights) < default_flights:
+            candidate = Flight.random(env.airspace, env.min_speed, env.max_speed, tol, 
+                                     random_init_heading=False, restricted_airspace=env.restricted_airspace)
+            valid = True
+            for f in env.flights:
+                if math.hypot(candidate.position.x - f.position.x, candidate.position.y - f.position.y) < min_distance:
+                    valid = False
+                    break
+            if valid:
+                env.flights.append(candidate)
+        
+        raw_obs_list = env.observation()
+        # Initialize trajectories with starting positions
+        traj = {i: {'x': [f.position.x], 'y': [f.position.y]} for i, f in enumerate(env.flights)}
         done = False
-        episode_trajectories = {i: {'x': [], 'y': []} for i in range(default_flights)}
         
         while not done:
-            current_actions = {}
-            active_indices = [i for i in range(default_flights) if i not in env.done]
+            active = [i for i in range(default_flights) if i not in env.done]
+            if not active:
+                break
             
-            for idx, agent_num in enumerate(active_indices):
-                # FIXED: Uses the detected norm_fn to handle potential 38-dim raw observations
-                obs = norm_fn(raw_obs_list[idx])
-                action, _ = model.predict(obs, deterministic=True)
-                current_actions[agent_num] = action
+            actions = {}
+            for idx, agent_num in enumerate(active):
+                obs = normalize_obs_standard(raw_obs_list[idx])
+                act, _ = model.predict(obs, deterministic=True)
+                actions[agent_num] = act
 
             for sub_step in range(ACTION_FREQUENCY):
-                active_now = [i for i in range(default_flights) if i not in env.done]
-                if not active_now: break
+                now = [i for i in range(default_flights) if i not in env.done]
+                if not now:
+                    break
+                    
+                env_act = np.zeros((len(now), 2), dtype=np.float32)
                 
-                env_actions = np.zeros((len(active_now), 2), dtype=np.float32)
+                # Apply the SAME action for all ACTION_FREQUENCY steps (matches training wrapper)
+                for idx, agent_num in enumerate(now):
+                    env_act[idx] = actions.get(agent_num, [0, 0])
                 
-                # ONLY apply steering on the first sub-step
-                if sub_step == 0:
-                    for idx, agent_num in enumerate(active_now):
-                        env_actions[idx] = current_actions.get(agent_num, [0.0, 0.0])
-                else:
-                    # Sub-steps 1-4: Explicitly keep actions at zero (fly straight)
-                    env_actions.fill(0.0)
+                raw_obs_list, _, done_t, done_e, _ = env.step(env_act)
                 
-                raw_obs_list, _, done_t, done_e, _ = env.step(env_actions)
-                
-                # Record trajectory every sub-step for visual smoothness
+                # Record positions of planes still flying or just reached target
                 for idx, f in enumerate(env.flights):
-                    if idx not in env.done:
-                        episode_trajectories[idx]['x'].append(f.position.x)
-                        episode_trajectories[idx]['y'].append(f.position.y)
+                    if idx in now:
+                        traj[idx]['x'].append(f.position.x)
+                        traj[idx]['y'].append(f.position.y)
                         
                 if done_t or done_e:
                     done = True
                     break
 
-        all_trajectories.append(episode_trajectories)
+        all_traj.append(traj)
 
-    # Plotting code
+    # Plotting
     fig, ax = plt.subplots(figsize=(10, 10))
     ax.set_facecolor('black')
     
-    # Draw Airspace boundaries (final episode's geometry is fine since fixed_geometries=True)
-    if env.airspace:
-        x, y = env.airspace.polygon.exterior.xy
-        ax.plot(x, y, color='white', linewidth=2, label='Outer Boundary')
-    if env.restricted_airspace:
-        x, y = env.restricted_airspace.polygon.exterior.xy
-        ax.plot(x, y, color='cyan', linewidth=2, linestyle='--', label='Restricted Airspace')
+    # Draw all trajectories as spaghetti lines
+    for t_set in all_traj:
+        for i in t_set:
+            if len(t_set[i]['x']) > 1:
+                ax.plot(t_set[i]['x'], t_set[i]['y'], color='yellow', alpha=0.15, linewidth=0.7)
 
-    # Draw spaghetti lines
-    for ep_trajs in all_trajectories:
-        for f_idx, traj in ep_trajs.items():
-            if len(traj['x']) > 1:
-                ax.plot(traj['x'], traj['y'], color='yellow', alpha=0.2, linewidth=1.0)
-
+    # Draw fixed airspace boundaries
+    x, y = fix_air.polygon.exterior.xy
+    ax.plot(x, y, color='white', linewidth=2, label='Outer Boundary')
+    x, y = fix_res.polygon.exterior.xy
+    ax.plot(x, y, color='cyan', linewidth=2, linestyle='--', label='Restricted Airspace')
+    
     ax.set_aspect('equal')
     ax.legend(loc='upper right')
     env.close()
@@ -457,7 +460,6 @@ def plot_reward_progress(incremental_dir, baseline_dir, out_dir):
     ax.set_xlabel('Training Steps')
     ax.set_ylabel('Mean Episode Reward')
     ax.legend(loc='lower right')
-    #plt.title("Hypothesis E: Incremental Reward Shaping Progression", pad=15)
     fig.tight_layout()
     plt.savefig(os.path.join(out_dir, "incremental_progress.png"), dpi=200, bbox_inches='tight')
     plt.close()
@@ -504,14 +506,6 @@ if __name__ == '__main__':
             
         print(f"Loading model from {model_path}")
         model = SAC.load(model_path)
-        
-        # Auto-detect and set global norm flag for workers
-        obs_size = model.observation_space.shape[0]
-        if obs_size <= 30:
-            _USE_LITE_NORM = True
-            print(f"Detected baseline model (obs_size={obs_size}), using lite normalizer")
-        else:
-            print(f"Detected full model (obs_size={obs_size}), using standard normalizer")
         
         if out_dir == "results/hypotheses_plots" and args.baseline_model:
             out_dir = os.path.join(run_dir, "hypotheses_plots")
