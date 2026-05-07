@@ -11,7 +11,9 @@ Usage:
     python evaluate.py --model results/1.5drift_finetune1/best_model/best_model.zip --episodes 50 --num-flights 10 --deploy-all
 """
 import argparse
+import os
 import numpy as np
+import matplotlib.pyplot as plt
 from stable_baselines3 import SAC
 
 from atcenv.env import Environment, NUMBER_INTRUDERS_STATE
@@ -104,55 +106,67 @@ def evaluate_all_agents(model_path: str, n_episodes: int = 10, num_flights: int 
     model = SAC.load(model_path)
     env = Environment(num_flights=num_flights)
 
-    total_conflicts = 0
-    total_restricted_intrusions = 0
-    total_targets_reached = 0
+    metrics = {
+        "conflicts": [],
+        "restricted_intrusions": [],
+        "targets_reached": [],
+        "episode_length": [],
+        "cumulative_drift": []
+    }
 
     for ep in range(n_episodes):
         raw_obs_list = env.reset(num_flights)
         done = False
         ep_conflicts = 0
         ep_restricted_intrusions = 0
+        ep_drift = 0.0
+        steps = 0
 
         while not done:
-            n_active = len(env.flights) - len(env.done)
+            active_indices = [i for i in range(len(env.flights)) if i not in env.done]
+            if not active_indices:
+                break
 
             # Get action for EACH active agent from the same model
-            actions = np.zeros((n_active, 2), dtype=np.float32)
-            agent_idx = 0
-            for i in range(len(env.flights)):
-                if i not in env.done:
-                    obs = normalize_obs(raw_obs_list[agent_idx])
-                    action, _ = model.predict(obs, deterministic=True)
-                    actions[agent_idx] = action
-                    agent_idx += 1
+            actions = np.zeros((len(active_indices), 2), dtype=np.float32)
+            for idx, i in enumerate(active_indices):
+                obs = normalize_obs(raw_obs_list[idx])
+                action, _ = model.predict(obs, deterministic=True)
+                actions[idx] = action
 
             # Step the sim ACTION_FREQUENCY times
             for step_i in range(ACTION_FREQUENCY):
                 raw_obs_list, rewards, done_t, done_e, info = env.step(actions)
+                
+                ep_conflicts += len(env.conflicts)
+                ep_restricted_intrusions += len(env.restricted_airspace_intrusions)
+                for f in env.flights:
+                    ep_drift += abs(f.drift)
+                
                 if done_t or done_e:
                     done = True
                     break
-                # After first step, maintain heading
-                actions = np.zeros((len(env.flights) - len(env.done), 2), dtype=np.float32)
 
-            ep_conflicts += len(env.conflicts)
-            ep_restricted_intrusions += len(env.restricted_airspace_intrusions)
-            if done_t or done_e:
+            steps += 1
+            if steps > 1000: # Safety break
                 done = True
 
         targets = len(env.done)
-        total_conflicts += ep_conflicts
-        total_restricted_intrusions += ep_restricted_intrusions
-        total_targets_reached += targets
+        metrics["conflicts"].append(ep_conflicts)
+        metrics["restricted_intrusions"].append(ep_restricted_intrusions)
+        metrics["targets_reached"].append(targets)
+        metrics["episode_length"].append(steps)
+        metrics["cumulative_drift"].append(ep_drift)
+        
         print(f"  Episode {ep+1}: conflicts={ep_conflicts}, restricted_intrusions={ep_restricted_intrusions}, targets_reached={targets}/{num_flights}")
 
     env.close()
 
     print(f"\n=== All-Agent Results ({n_episodes} episodes) ===")
-    print(f"Avg conflicts/episode:  {total_conflicts / n_episodes:.1f}")
-    print(f"Avg restricted intrusions/episode: {total_restricted_intrusions / n_episodes:.1f}")
-    print(f"Avg targets reached:    {total_targets_reached / n_episodes:.1f} / {num_flights}")
+    print(f"Avg conflicts/episode:  {np.mean(metrics['conflicts']):.1f}")
+    print(f"Avg restricted intrusions/episode: {np.mean(metrics['restricted_intrusions']):.1f}")
+    print(f"Avg targets reached:    {np.mean(metrics['targets_reached']):.1f} / {num_flights}")
+    print(f"Avg drift:             {np.mean(metrics['cumulative_drift']):.1f} rad")
 
 
 if __name__ == "__main__":

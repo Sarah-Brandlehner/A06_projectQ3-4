@@ -29,6 +29,9 @@ Commands:
     python visualize.py evaluate --run-dir results/minimal_reward_ALL_AGENTS --no-random-heading --workers 8
     python visualize.py evaluate --run-dir results/jan_3 --no-random-heading --workers 24 --episodes 1000
     
+    To generate paper-ready plots (5 separate high-res images without headings/boxes):
+    python visualize.py evaluate --run-dir results/thisone --save-individual --episodes 50
+
     python visualize.py compare --run-dir results/jan_3 --no-random-heading
 
 """
@@ -228,6 +231,9 @@ def record_episode(model, num_flights=5, deploy_all=True, random_heading=True):
 def plot_trajectories(model_path, num_flights=5, deploy_all=True,
                       save_path="results/plots/trajectories.png", random_heading=False):
     """Plot aircraft trajectories for one episode (academic styling)."""
+    # Remove .zip if present as SAC.load appends it automatically
+    if model_path.endswith(".zip"):
+        model_path = model_path[:-4]
     model = SAC.load(model_path)
     trajectories, targets, airspace, restricted_airspace, total_conflicts, total_restricted_intrusions = record_episode(
         model, num_flights, deploy_all
@@ -330,6 +336,9 @@ def plot_trajectories(model_path, num_flights=5, deploy_all=True,
 
 def _eval_episodes_worker(model_path, episode_indices, num_flights, deploy_all, random_heading=False):
     """Worker function that runs a batch of episodes (used by ProcessPoolExecutor)."""
+    # Remove .zip if present as SAC.load appends it automatically
+    if model_path.endswith(".zip"):
+        model_path = model_path[:-4]
     model = SAC.load(model_path)
     env = Environment(num_flights=num_flights, random_init_heading=random_heading)
 
@@ -576,6 +585,70 @@ def plot_evaluation(model_path, n_episodes=30, num_flights=5,
     plt.show()
 
 
+def plot_publication_individual(metrics, out_dir, num_flights):
+    """Save 5 separate publication-quality plots from evaluation metrics."""
+    os.makedirs(out_dir, exist_ok=True)
+    
+    # Publication-quality style settings
+    plt.rcParams.update({
+        'font.size': 10,
+        'axes.labelsize': 10,
+        'xtick.labelsize': 9,
+        'ytick.labelsize': 9,
+        'axes.titlesize': 11,
+        'figure.titlesize': 13,
+        'grid.linewidth': 0.5,
+        'axes.linewidth': 0.8
+    })
+
+    colors = {
+        'conflicts': '#ff9999',
+        'targets': '#99ff99',
+        'intrusions': '#df99ff',
+        'drift': '#ffcc99',
+        'length': '#99ccff',
+        'mean_line': '#666666'
+    }
+
+    plot_configs = [
+        ('conflicts', 'Episode', 'Number of Conflicts', 'conflicts.png', colors['conflicts']),
+        ('targets_reached', 'Episode', 'Targets Reached', 'targets_reached.png', colors['targets']),
+        ('restricted_intrusions', 'Episode', 'Restricted Zone Intrusions', 'intrusions.png', colors['intrusions']),
+        ('total_drift', 'Episode', 'Cumulative Drift (radians)', 'drift.png', colors['drift']),
+        ('episode_length', 'Episode Length (steps)', 'Frequency', 'length_dist.png', colors['length'])
+    ]
+
+    for key, xlabel, ylabel, filename, color in plot_configs:
+        fig, ax = plt.subplots(figsize=(6, 4))
+        
+        if key == 'episode_length':
+            # Histogram for episode length
+            ax.hist(metrics[key], bins=min(15, len(metrics[key])), color=color, alpha=0.7, edgecolor=color)
+            mean_val = np.mean(metrics[key])
+            ax.axvline(mean_val, color=colors['mean_line'], linestyle='--', linewidth=1)
+        else:
+            # Bar chart for per-episode metrics
+            ax.bar(range(len(metrics[key])), metrics[key], color=color, alpha=0.7, edgecolor=color)
+            mean_val = np.mean(metrics[key])
+            ax.axhline(mean_val, color=colors['mean_line'], linestyle='--', linewidth=1)
+            ax.text(len(metrics[key])-0.5, mean_val, f'μ={mean_val:.2f}', ha='right', va='bottom', fontsize=8)
+            
+            if key == 'targets_reached':
+                ax.set_ylim(0, num_flights + 0.5)
+
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.grid(True, alpha=0.2, linestyle='--')
+        ax.set_xlabel(xlabel)
+        ax.set_ylabel(ylabel)
+        
+        plt.tight_layout()
+        plt.savefig(os.path.join(out_dir, filename), dpi=300, bbox_inches='tight')
+        plt.close()
+    
+    print(f"Saved 5 publication plots to {out_dir}")
+
+
 # ────────────────────────── CHECKPOINT COMPARISON ──────────────────────────
 
 def _eval_checkpoint_worker(ckpt_path, step_num, n_episodes, num_flights):
@@ -714,6 +787,8 @@ if __name__ == "__main__":
                         help="Number of parallel worker processes for evaluation")
     parser.add_argument("--no-random-heading", action="store_true", 
                         help="Evaluate on perfectly straight initial headings instead of randomized ones.")
+    parser.add_argument("--save-individual", action="store_true",
+                        help="Save 5 separate publication-quality plots instead of a single panel.")
     args = parser.parse_args()
     
     random_heading_val = not args.no_random_heading
@@ -733,9 +808,14 @@ if __name__ == "__main__":
                           random_heading=random_heading_val)
 
     elif args.command == "evaluate":
-        plot_evaluation(model_path, args.episodes, args.num_flights,
-                        save_path=os.path.join(args.run_dir, "plots", "evaluation.png"),
-                        workers=args.workers, random_heading=random_heading_val)
+        if args.save_individual:
+            metrics = run_evaluation(model_path, args.episodes, args.num_flights, deploy_all=True, workers=args.workers, random_heading=random_heading_val)
+            out_dir = os.path.join(args.run_dir, "plots", "evaluation_individual")
+            plot_publication_individual(metrics, out_dir, args.num_flights)
+        else:
+            plot_evaluation(model_path, args.episodes, args.num_flights,
+                            save_path=os.path.join(args.run_dir, "plots", "evaluation.png"),
+                            workers=args.workers, random_heading=random_heading_val)
 
     elif args.command == "compare":
         compare_checkpoints(checkpoint_dir=checkpoint_dir, 
