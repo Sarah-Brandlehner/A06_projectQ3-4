@@ -29,7 +29,7 @@ Commands (Modes):
     
     python evaluate_hypotheses.py airspace-sweep --run-dir results/thisone
     python evaluate_hypotheses.py density-sweep --run-dir results/thisone
-    python evaluate_hypotheses.py heatmap --run-dir results/thisone
+    python evaluate_hypotheses_changed.py heatmap --run-dir results/thisone --episodes 2
     python evaluate_hypotheses.py all --run-dir results/thisone
 
     You can specify the number of episodes to run per condition using the --episodes argument (default is 100):

@@ -101,13 +101,8 @@ class Environment(gym.Env):
         return None
 
     def reward(self) -> List:
-<<<<<<< Updated upstream
         drifts = self.drift_penalties() * 0.7
         conflicts = self.conflict_penalties() * -50.0
-=======
-        drifts = self.drift_penalties() * 0.6
-        conflicts = self.conflict_penalties() * -40.0
->>>>>>> Stashed changes
         
         # New: Radial Approach Penalty
         # Punishment = (Approach Velocity) / (fixed distance)
@@ -117,11 +112,7 @@ class Environment(gym.Env):
             if i not in self.done:
                 dist, _, _, approach = f.closest_restricted_point(self.restricted_airspace)
                 if f.in_restricted_airspace(self.restricted_airspace):
-<<<<<<< Updated upstream
                     restricted_penalties[i] -=25.0 # Penalty for being inside
-=======
-                    restricted_penalties[i] -=20.0 # Penalty for being inside
->>>>>>> Stashed changes
                     if approach > 0:
                         # The faster they fly toward the exit, the less the penalty hurts.
                         restricted_penalties[i] += (approach / self.max_speed) * 3.0
