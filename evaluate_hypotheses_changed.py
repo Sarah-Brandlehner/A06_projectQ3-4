@@ -27,7 +27,7 @@ Commands (Modes):
 
     To evaluate hypotheses on a specific model, use the --run-dir argument:
     
-    python evaluate_hypotheses_changed.py airspace-sweep --run-dir results/thisone
+    python evaluate_hypotheses_changed.py airspace-sweep --run-dir results/thisone --episodes 100
     python evaluate_hypotheses_changed.py density-sweep --run-dir results/thisone
     python evaluate_hypotheses_changed.py heatmap --run-dir results/thisone --episodes 2
     python evaluate_hypotheses_changed.py all --run-dir results/thisone
@@ -104,12 +104,14 @@ def run_episode(model, env_kwargs, num_flights=10, norm_fn=None):
     unique_conflicts = set()
     unique_intrusions = set()
     cumulative_drift = 0.0
-    
+    had_conflict = False
+    had_intrusion = False
+
     while not done:
         # 1. BRAIN STEP: Decide actions for all active flights
         current_actions = {}
         active_indices = [i for i in range(num_flights) if i not in env.done]
-        
+
         # Ensure we have observations for everyone
         if len(raw_obs_list) != len(active_indices):
             break
@@ -126,35 +128,46 @@ def run_episode(model, env_kwargs, num_flights=10, norm_fn=None):
             if not active_now:
                 done = True
                 break
-                
+
             env_actions = np.zeros((len(active_now), 2), dtype=np.float32)
-            
+
             # Apply the SAME action for all ACTION_FREQUENCY steps (matches training wrapper)
             for idx, agent_num in enumerate(active_now):
                 env_actions[idx] = current_actions.get(agent_num, [0.0, 0.0])
-            
+
             raw_obs_list, rewards, done_t, done_e, info = env.step(env_actions)
-            
+
             # Record safety violations that happen during any sub-step
-            for f_idx in env.conflicts:
-                unique_conflicts.add(f_idx)
-            for f_idx in env.restricted_airspace_intrusions:
-                unique_intrusions.add(f_idx)
-                
+            #if env.conflicts:
+            #    had_conflict = True
+            #if env.restricted_airspace_intrusions:
+            #    had_intrusion = True
+
+            #for f_idx in env.conflicts:
+            #    unique_conflicts.add(f_idx)
+            #for f_idx in env.restricted_airspace_intrusions:
+            #    unique_intrusions.add(f_idx)
+
             if done_t or done_e:
                 done = True
                 break
 
+        if len(env.conflicts) > 0:
+            had_conflict = True
+        if len(env.restricted_airspace_intrusions) > 0:
+            had_intrusion = True
+        
         # Record drift once per decision cycle for efficiency metrics
         for f in env.flights:
             if hasattr(f, 'drift'):
                 cumulative_drift += abs(f.drift)
-                
+
         decision_steps += 1
 
     targets_reached = len(env.done)
     env.close()
-    return len(unique_conflicts), len(unique_intrusions), targets_reached, cumulative_drift / max(1, decision_steps)
+    # Return episode-level fail-safe flags
+    return had_conflict, had_intrusion, targets_reached, cumulative_drift / max(1, decision_steps)
 
 def eval_worker(model_path, env_kwargs, num_flights, episodes):
     """Worker function to run a full parameter condition internally so it isn't bottlenecked."""
@@ -163,56 +176,64 @@ def eval_worker(model_path, env_kwargs, num_flights, episodes):
     from stable_baselines3 import SAC
     model = SAC.load(model_path)
     
-    cfs_list = []; ifs_list = []; drifts = []
+    conflict_episodes = []
+    intrusion_episodes = []
+    drifts = []
     for _ in range(episodes):
-        cf, inf, _, d = run_episode(model, env_kwargs, num_flights, norm_fn=normalize_obs_standard)
-        cfs_list.append((cf / num_flights) * 100)
-        ifs_list.append((inf / num_flights) * 100)
+        had_conflict, had_intrusion, _, d = run_episode(model, env_kwargs, num_flights, norm_fn=normalize_obs_standard)
+        conflict_episodes.append(had_conflict)
+        intrusion_episodes.append(had_intrusion)
         drifts.append(d)
-    return cfs_list, ifs_list, drifts
+    return conflict_episodes, intrusion_episodes, drifts
 
 def sweep_airspace(model_path, out_dir, episodes, default_flights=10):
     print("Running Airspace Area Sweep (Parallelized)...")
     ratios = np.arange(0.10, 0.525, 0.025)
-    cf_rates = []; if_rates = []
-    cf_stds = []; if_stds = []
+    cf_fail_rates = []  # % of episodes with any conflict
+    if_fail_rates = []  # % of episodes with any intrusion
+    cf_stds = []
+    if_stds = []
 
     with ProcessPoolExecutor() as executor:
         futures = []
         for ratio in ratios:
             futures.append(executor.submit(eval_worker, model_path, {'restricted_area_ratio': ratio}, default_flights, episodes))
-            
+
         for future in tqdm(futures, desc="Airspace Sweep"):
-            cfs_list, ifs_list, _ = future.result()
-            cf_rates.append(np.mean(cfs_list))
-            if_rates.append(np.mean(ifs_list))
-            cf_stds.append(np.std(cfs_list))
-            if_stds.append(np.std(ifs_list))
-            
-    cf_rates = np.array(cf_rates); if_rates = np.array(if_rates)
-    cf_stds = np.array(cf_stds); if_stds = np.array(if_stds)
-    
+            conflict_episodes, intrusion_episodes, _ = future.result()
+            cf_fail = np.mean(conflict_episodes) * 100
+            if_fail = np.mean(intrusion_episodes) * 100
+            cf_fail_rates.append(cf_fail)
+            if_fail_rates.append(if_fail)
+            cf_stds.append(np.std(conflict_episodes) * 100)
+            if_stds.append(np.std(intrusion_episodes) * 100)
+
+    cf_fail_rates = np.array(cf_fail_rates)
+    if_fail_rates = np.array(if_fail_rates)
+    cf_stds = np.array(cf_stds)
+    if_stds = np.array(if_stds)
+
     fig, ax1 = plt.subplots(figsize=(10, 6))
     ax1.set_xlabel('Restricted Airspace Ratio (Area %)')
-    ax1.set_ylabel('Flights w/ Conflict (%)', color='tab:blue')
-    ax1.plot(ratios, cf_rates, color='tab:blue', marker='o', linewidth=1.5, label='Conflict Rate')
-    ax1.fill_between(ratios, np.maximum(0, cf_rates - cf_stds), cf_rates + cf_stds, color='tab:blue', alpha=0.15)
+    ax1.set_ylabel('Episodes w/ Conflict (%)', color='tab:blue')
+    ax1.plot(ratios, cf_fail_rates, color='tab:blue', marker='o', linewidth=1.5, label='Conflict Episode Rate')
+    ax1.fill_between(ratios, np.maximum(0, cf_fail_rates - cf_stds), cf_fail_rates + cf_stds, color='tab:blue', alpha=0.15)
     ax1.tick_params(axis='y', labelcolor='tab:blue')
     ax1.grid(True, alpha=0.3, linestyle='--')
-    
+
     ax2 = ax1.twinx()
-    ax2.set_ylabel('Flights w/ Intrusion (%)', color='tab:orange')
-    ax2.plot(ratios, if_rates, color='tab:orange', marker='s', linewidth=1.5, linestyle='--', label='Intrusion Rate')
-    ax2.fill_between(ratios, np.maximum(0, if_rates - if_stds), if_rates + if_stds, color='tab:orange', alpha=0.15)
+    ax2.set_ylabel('Episodes w/ Intrusion (%)', color='tab:orange')
+    ax2.plot(ratios, if_fail_rates, color='tab:orange', marker='s', linewidth=1.5, linestyle='--', label='Intrusion Episode Rate')
+    ax2.fill_between(ratios, np.maximum(0, if_fail_rates - if_stds), if_fail_rates + if_stds, color='tab:orange', alpha=0.15)
     ax2.tick_params(axis='y', labelcolor='tab:orange')
-    
+
     ax1.axvline(x=0.20, color='gray', linestyle=':', label='Training Environment Area (20%)')
-    
-    ylim_max = max(np.max(cf_rates + cf_stds), np.max(if_rates + if_stds)) * 1.1 + 2
+
+    ylim_max = max(np.max(cf_fail_rates + cf_stds), np.max(if_fail_rates + if_stds)) * 1.1 + 2
     if ylim_max < 20: ylim_max = 20
     ax1.set_ylim([-2, ylim_max])
     ax2.set_ylim([-2, ylim_max])
-    
+
     fig.tight_layout()
     plt.savefig(os.path.join(out_dir, "airspace_sweep.png"), dpi=200, bbox_inches='tight')
     plt.close()
@@ -221,46 +242,49 @@ def sweep_airspace(model_path, out_dir, episodes, default_flights=10):
 def sweep_density(model_path, out_dir, episodes):
     print("Running Density Sweep (Parallelized)...")
     densities = np.arange(10, 31, 1) # from 10 to 30
-    cf_rates = []; if_rates = []
-    cf_stds = []; if_stds = []
+    cf_fail_rates = []  # % of episodes with any conflict
+    if_fail_rates = []  # % of episodes with any intrusion
+    cf_stds = []
+    if_stds = []
     drifts = []
 
     with ProcessPoolExecutor() as executor:
         futures = []
         for num_flights in densities:
             futures.append(executor.submit(eval_worker, model_path, {}, num_flights, episodes))
-            
+
         for i, future in enumerate(tqdm(futures, desc="Density Sweep")):
-            cfs_list, ifs_list, drift_arr = future.result()
-            
-            c = np.mean(cfs_list)
-            i_pct = np.mean(ifs_list)
-            cf_rates.append(c)
-            if_rates.append(i_pct)
-            cf_stds.append(np.std(cfs_list))
-            if_stds.append(np.std(ifs_list))
+            conflict_episodes, intrusion_episodes, drift_arr = future.result()
+            cf_fail = np.mean(conflict_episodes) * 100
+            if_fail = np.mean(intrusion_episodes) * 100
+            cf_fail_rates.append(cf_fail)
+            if_fail_rates.append(if_fail)
+            cf_stds.append(np.std(conflict_episodes) * 100)
+            if_stds.append(np.std(intrusion_episodes) * 100)
             drifts.append(drift_arr)
-            
-    cf_rates = np.array(cf_rates); if_rates = np.array(if_rates)
-    cf_stds = np.array(cf_stds); if_stds = np.array(if_stds)
-    
+
+    cf_fail_rates = np.array(cf_fail_rates)
+    if_fail_rates = np.array(if_fail_rates)
+    cf_stds = np.array(cf_stds)
+    if_stds = np.array(if_stds)
+
     fig, ax = plt.subplots(figsize=(10, 6))
-    ax.plot(densities, cf_rates, color='tab:blue', marker='o', linewidth=1.5, label='Conflict Rate')
-    ax.fill_between(densities, np.maximum(0, cf_rates - cf_stds), cf_rates + cf_stds, color='tab:blue', alpha=0.15)
-    
-    ax.plot(densities, if_rates, color='tab:orange', marker='s', linewidth=1.5, label='Intrusion Rate')
-    ax.fill_between(densities, np.maximum(0, if_rates - if_stds), if_rates + if_stds, color='tab:orange', alpha=0.15)
-    
+    ax.plot(densities, cf_fail_rates, color='tab:blue', marker='o', linewidth=1.5, label='Conflict Episode Rate')
+    ax.fill_between(densities, np.maximum(0, cf_fail_rates - cf_stds), cf_fail_rates + cf_stds, color='tab:blue', alpha=0.15)
+
+    ax.plot(densities, if_fail_rates, color='tab:orange', marker='s', linewidth=1.5, label='Intrusion Episode Rate')
+    ax.fill_between(densities, np.maximum(0, if_fail_rates - if_stds), if_fail_rates + if_stds, color='tab:orange', alpha=0.15)
+
     ax.axhline(y=20, color='red', linestyle='--', label='Limit Threshold')
-    
+
     ax.set_xlabel('Traffic Density (Number of Aircraft)')
-    ax.set_ylabel('Error Rate (% of flights)')
+    ax.set_ylabel('Error Rate (% of episodes)')
     ax.grid(True, alpha=0.3, linestyle='--')
-    
+
     ax.autoscale(enable=True, axis='y')
     ylim = ax.get_ylim()
     if ylim[1] < 25: ax.set_ylim([-2, 25])
-    
+
     ax.legend(loc='upper left')
     fig.tight_layout()
     plt.savefig(os.path.join(out_dir, "density_sweep.png"), dpi=200, bbox_inches='tight')
