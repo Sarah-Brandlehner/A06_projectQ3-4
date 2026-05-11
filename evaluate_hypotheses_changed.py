@@ -310,29 +310,29 @@ def sweep_uncertainties(model_path, out_dir, episodes, default_flights=10):
         for name, config in experiments:
             futures.append(executor.submit(eval_worker, model_path, config, default_flights, episodes))
             names.append(name)
-            
+
         for future in tqdm(futures, desc="Uncertainty Ablation"):
             cfs_list, ifs_list, _ = future.result()
-            cf_rates.append(np.mean(cfs_list))
-            if_rates.append(np.mean(ifs_list))
-            cf_stds.append(np.std(cfs_list))
-            if_stds.append(np.std(ifs_list))
-        
+            cf_rates.append(np.mean(cfs_list) * 100)
+            if_rates.append(np.mean(ifs_list) * 100)
+            cf_stds.append(np.std(cfs_list) * 100)
+            if_stds.append(np.std(ifs_list) * 100)
+
     x = np.arange(len(names))
     width = 0.35
 
     fig, ax = plt.subplots(figsize=(10, 6))
     cf_lower_error = np.minimum(cf_rates, cf_stds)
     if_lower_error = np.minimum(if_rates, if_stds)
-    rects1 = ax.bar(x - width/2, cf_rates, width, yerr=[cf_lower_error, cf_stds], capsize=4, label='Conflict Rate', color='#aec7e8', edgecolor='#1f77b4')
-    rects2 = ax.bar(x + width/2, if_rates, width, yerr=[if_lower_error, if_stds], capsize=4, label='Intrusion Rate', color='#ffbb78', edgecolor='#ff7f0e')
+    rects1 = ax.bar(x - width/2, cf_rates, width, yerr=[cf_lower_error, cf_stds], capsize=4, label='Conflict Episode Rate', color='#aec7e8', edgecolor='#1f77b4')
+    rects2 = ax.bar(x + width/2, if_rates, width, yerr=[if_lower_error, if_stds], capsize=4, label='Intrusion Episode Rate', color='#ffbb78', edgecolor='#ff7f0e')
 
-    ax.set_ylabel('Flights with Errors (%)')
+    ax.set_ylabel('Episodes with Errors (%)')
     ax.set_xticks(x)
     ax.set_xticklabels(names, rotation=15)
     ax.legend(loc='lower right')
     ax.grid(True, alpha=0.3, linestyle='--', axis='y')
-    
+
     ax.autoscale(enable=True, axis='y')
     ylim = ax.get_ylim()
     if ylim[1] < 25: ax.set_ylim([-2, 25])
