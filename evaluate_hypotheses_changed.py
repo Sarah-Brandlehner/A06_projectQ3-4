@@ -215,7 +215,7 @@ def sweep_airspace(model_path, out_dir, episodes, default_flights=10):
     if_stds = np.array(if_stds)
 
     fig, ax1 = plt.subplots(figsize=(10, 6))
-    ax1.set_xlabel('Restricted Airspace Ratio (Area %)')
+    ax1.set_xlabel('Restricted Airspace Ratio (Fraction of Total Area)')
     ax1.set_ylabel('Episodes w/ Conflict (%)', color='tab:blue')
     ax1.plot(ratios, cf_fail_rates, color='tab:blue', marker='o', linewidth=1.5, label='Conflict Episode Rate')
     ax1.fill_between(ratios, np.maximum(0, cf_fail_rates - cf_stds), cf_fail_rates + cf_stds, color='tab:blue', alpha=0.15)
