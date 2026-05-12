@@ -29,10 +29,12 @@ Commands:
     python visualize.py evaluate --run-dir results/minimal_reward_ALL_AGENTS --no-random-heading --workers 8
     python visualize.py evaluate --run-dir results/jan_3 --no-random-heading --workers 24 --episodes 1000
     
-    To generate paper-ready plots (5 separate high-res images without headings/boxes):
-    python visualize.py evaluate --run-dir results/thisone --save-individual --episodes 50
-
     python visualize.py compare --run-dir results/jan_3 --no-random-heading
+
+    making graphs from CSV's:
+    python visualize.py plot-compare --csv-path results/thisoneLite/thisoneLite/plots/checkpoint_comparison.csv
+
+
 
 """
 import argparse
@@ -231,9 +233,6 @@ def record_episode(model, num_flights=5, deploy_all=True, random_heading=True):
 def plot_trajectories(model_path, num_flights=5, deploy_all=True,
                       save_path="results/plots/trajectories.png", random_heading=False):
     """Plot aircraft trajectories for one episode (academic styling)."""
-    # Remove .zip if present as SAC.load appends it automatically
-    if model_path.endswith(".zip"):
-        model_path = model_path[:-4]
     model = SAC.load(model_path)
     trajectories, targets, airspace, restricted_airspace, total_conflicts, total_restricted_intrusions = record_episode(
         model, num_flights, deploy_all
@@ -336,9 +335,6 @@ def plot_trajectories(model_path, num_flights=5, deploy_all=True,
 
 def _eval_episodes_worker(model_path, episode_indices, num_flights, deploy_all, random_heading=False):
     """Worker function that runs a batch of episodes (used by ProcessPoolExecutor)."""
-    # Remove .zip if present as SAC.load appends it automatically
-    if model_path.endswith(".zip"):
-        model_path = model_path[:-4]
     model = SAC.load(model_path)
     env = Environment(num_flights=num_flights, random_init_heading=random_heading)
 
@@ -431,11 +427,131 @@ def run_evaluation(model_path, n_episodes=30, num_flights=5, deploy_all=True, wo
     return metrics
 
 
+def plot_publication_individual(metrics, n_episodes, num_flights, out_dir):
+    """Plot each evaluation metric as a separate, publication-ready graph."""
+    os.makedirs(out_dir, exist_ok=True)
+    
+    plt.rcParams['font.serif'] = ['Times New Roman', 'DejaVu Serif']
+    plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans']
+    plt.rcParams['font.size'] = 14
+    plt.rcParams['axes.labelsize'] = 14
+    plt.rcParams['axes.titlesize'] = 16
+    plt.rcParams['xtick.labelsize'] = 12
+    plt.rcParams['ytick.labelsize'] = 12
+    plt.rcParams['legend.fontsize'] = 12
+    plt.rcParams['lines.linewidth'] = 2.0
+    plt.rcParams['axes.linewidth'] = 1.0
+    
+    colors = {
+        'conflicts': '#D32F2F',
+        'targets': '#388E3C',
+        'episode': '#1976D2',
+        'drift': '#F57C00',
+        'intrusions': '#6A1B9A',
+        'mean_line': '#424242'
+    }
+
+    def style_single_axis(ax):
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.5, axis='y')
+        ax.set_axisbelow(True)
+
+    # 1. Conflicts
+    fig, ax = plt.subplots(figsize=(8, 6))
+    fig.patch.set_facecolor('white')
+    ax.bar(range(len(metrics["conflicts"])), metrics["conflicts"], color=colors['conflicts'], alpha=0.8, width=0.8)
+    mean_conflicts = np.mean(metrics['conflicts'])
+    ax.axhline(mean_conflicts, color=colors['mean_line'], linestyle='-', linewidth=2.0)
+    ax.text(len(metrics['conflicts'])*0.98, mean_conflicts, f'μ={mean_conflicts:.2f}', 
+            ha='right', va='bottom', fontsize=12, bbox=dict(boxstyle='round,pad=0.3', facecolor='white', edgecolor='none', alpha=0.8))
+    ax.set_xlabel('Episode')
+    ax.set_ylabel('Number of Conflicts')
+    ax.set_ylim(bottom=0)
+    style_single_axis(ax)
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, "conflicts.png"), dpi=300, bbox_inches="tight")
+    plt.close()
+
+    # 2. Targets
+    fig, ax = plt.subplots(figsize=(8, 6))
+    fig.patch.set_facecolor('white')
+    ax.bar(range(len(metrics["targets_reached"])), metrics["targets_reached"], color=colors['targets'], alpha=0.8, width=0.8)
+    mean_targets = np.mean(metrics['targets_reached'])
+    ax.axhline(mean_targets, color=colors['mean_line'], linestyle='-', linewidth=2.0, label=f'Mean = {mean_targets:.2f}')
+    ax.axhline(num_flights, color='#757575', linestyle='--', linewidth=1.5, label=f'Max = {num_flights}')
+    ax.set_xlabel('Episode')
+    ax.set_ylabel('Targets Reached')
+    ax.set_ylim(0, num_flights + 0.5)
+    ax.legend(loc='lower right')
+    style_single_axis(ax)
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, "targets.png"), dpi=300, bbox_inches="tight")
+    plt.close()
+
+    # 3. Intrusions
+    fig, ax = plt.subplots(figsize=(8, 6))
+    fig.patch.set_facecolor('white')
+    ax.bar(range(len(metrics["restricted_intrusions"])), metrics["restricted_intrusions"], color=colors['intrusions'], alpha=0.8, width=0.8)
+    mean_intrusions = np.mean(metrics['restricted_intrusions'])
+    ax.axhline(mean_intrusions, color=colors['mean_line'], linestyle='-', linewidth=2.0)
+    ax.text(len(metrics['restricted_intrusions'])*0.98, mean_intrusions, f'μ={mean_intrusions:.2f}', 
+            ha='right', va='bottom', fontsize=12, bbox=dict(boxstyle='round,pad=0.3', facecolor='white', edgecolor='none', alpha=0.8))
+    ax.set_xlabel('Episode')
+    ax.set_ylabel('Restricted Zone Intrusions')
+    ax.set_ylim(bottom=0)
+    style_single_axis(ax)
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, "intrusions.png"), dpi=300, bbox_inches="tight")
+    plt.close()
+
+    # 4. Episode length
+    fig, ax = plt.subplots(figsize=(8, 6))
+    fig.patch.set_facecolor('white')
+    ax.hist(metrics["episode_length"], bins=15, color=colors['episode'], alpha=0.8, edgecolor='black', linewidth=1.0)
+    ax.axvline(np.mean(metrics['episode_length']), color=colors['mean_line'], linestyle='-', linewidth=2.0)
+    ax.set_xlabel('Episode Length (steps)')
+    ax.set_ylabel('Frequency')
+    style_single_axis(ax)
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, "episode_length.png"), dpi=300, bbox_inches="tight")
+    plt.close()
+
+    # 5. Drift
+    fig, ax = plt.subplots(figsize=(8, 6))
+    fig.patch.set_facecolor('white')
+    ax.bar(range(len(metrics["total_drift"])), metrics["total_drift"], color=colors['drift'], alpha=0.8, width=0.8)
+    mean_drift = np.mean(metrics['total_drift'])
+    ax.axhline(mean_drift, color=colors['mean_line'], linestyle='-', linewidth=2.0)
+    ax.text(len(metrics['total_drift'])*0.98, mean_drift, f'μ={mean_drift:.2f}', 
+            ha='right', va='bottom', fontsize=12, bbox=dict(boxstyle='round,pad=0.3', facecolor='white', edgecolor='none', alpha=0.8))
+    ax.set_xlabel('Episode')
+    ax.set_ylabel('Cumulative Drift (radians)')
+    ax.set_ylim(bottom=0)
+    style_single_axis(ax)
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, "drift.png"), dpi=300, bbox_inches="tight")
+    plt.close()
+    
+    print(f"Saved individual publication graphs to {out_dir}")
+
 def plot_evaluation(model_path, n_episodes=30, num_flights=5,
-                    save_path="results/plots/evaluation.png", workers=1, random_heading=False):
+                    save_path="results/plots/evaluation.png", workers=1, random_heading=False, save_csv=False, save_individual=False):
     """Run evaluation and plot summary metrics (academic styling)."""
     print(f"Running {n_episodes} episodes across {workers} worker(s)...")
     metrics = run_evaluation(model_path, n_episodes, num_flights, deploy_all=True, workers=workers, random_heading=random_heading)
+
+    if save_csv:
+        import pandas as pd
+        csv_path = save_path.replace(".png", ".csv")
+        df = pd.DataFrame(metrics)
+        df.to_csv(csv_path, index_label="Episode")
+        print(f"Saved evaluation metrics CSV to {csv_path}")
+
+    if save_individual:
+        individual_dir = os.path.join(os.path.dirname(save_path), "evaluation_individual")
+        plot_publication_individual(metrics, n_episodes, num_flights, individual_dir)
+
 
     # Set publication-quality style
     plt.rcParams['font.serif'] = ['Times New Roman', 'DejaVu Serif']
@@ -585,95 +701,135 @@ def plot_evaluation(model_path, n_episodes=30, num_flights=5,
     plt.show()
 
 
-def plot_publication_individual(metrics, out_dir, num_flights):
-    """Save 5 separate publication-quality plots from evaluation metrics."""
-    os.makedirs(out_dir, exist_ok=True)
-    
-    # Publication-quality style settings
-    plt.rcParams.update({
-        'font.size': 10,
-        'axes.labelsize': 10,
-        'xtick.labelsize': 9,
-        'ytick.labelsize': 9,
-        'axes.titlesize': 11,
-        'figure.titlesize': 13,
-        'grid.linewidth': 0.5,
-        'axes.linewidth': 0.8
-    })
-
-    colors = {
-        'conflicts': '#ff9999',
-        'targets': '#99ff99',
-        'intrusions': '#df99ff',
-        'drift': '#ffcc99',
-        'length': '#99ccff',
-        'mean_line': '#666666'
-    }
-
-    plot_configs = [
-        ('conflicts', 'Episode', 'Number of Conflicts', 'conflicts.png', colors['conflicts']),
-        ('targets_reached', 'Episode', 'Targets Reached', 'targets_reached.png', colors['targets']),
-        ('restricted_intrusions', 'Episode', 'Restricted Zone Intrusions', 'intrusions.png', colors['intrusions']),
-        ('total_drift', 'Episode', 'Cumulative Drift (radians)', 'drift.png', colors['drift']),
-        ('episode_length', 'Episode Length (steps)', 'Frequency', 'length_dist.png', colors['length'])
-    ]
-
-    for key, xlabel, ylabel, filename, color in plot_configs:
-        fig, ax = plt.subplots(figsize=(6, 4))
-        
-        if key == 'episode_length':
-            # Histogram for episode length
-            ax.hist(metrics[key], bins=min(15, len(metrics[key])), color=color, alpha=0.7, edgecolor=color)
-            mean_val = np.mean(metrics[key])
-            ax.axvline(mean_val, color=colors['mean_line'], linestyle='--', linewidth=1)
-        else:
-            # Bar chart for per-episode metrics
-            ax.bar(range(len(metrics[key])), metrics[key], color=color, alpha=0.7, edgecolor=color)
-            mean_val = np.mean(metrics[key])
-            ax.axhline(mean_val, color=colors['mean_line'], linestyle='--', linewidth=1)
-            ax.text(len(metrics[key])-0.5, mean_val, f'μ={mean_val:.2f}', ha='right', va='bottom', fontsize=8)
-            
-            if key == 'targets_reached':
-                ax.set_ylim(0, num_flights + 0.5)
-
-        ax.spines['top'].set_visible(False)
-        ax.spines['right'].set_visible(False)
-        ax.grid(True, alpha=0.2, linestyle='--')
-        ax.set_xlabel(xlabel)
-        ax.set_ylabel(ylabel)
-        
-        plt.tight_layout()
-        plt.savefig(os.path.join(out_dir, filename), dpi=300, bbox_inches='tight')
-        plt.close()
-    
-    print(f"Saved 5 publication plots to {out_dir}")
-
-
 # ────────────────────────── CHECKPOINT COMPARISON ──────────────────────────
 
-def _eval_checkpoint_worker(ckpt_path, step_num, n_episodes, num_flights):
-    """Worker to evaluate a single checkpoint (used by ProcessPoolExecutor)."""
-    metrics = _eval_episodes_worker(ckpt_path, list(range(n_episodes)), num_flights, deploy_all=True)
-    mean_c = np.mean(metrics["conflicts"])
-    mean_t = np.mean(metrics["targets_reached"])
-    cf = sum(1 for c in metrics["conflicts"] if c == 0)
-    cf_pct = 100 * cf / n_episodes
-    return step_num, mean_c, mean_t, cf_pct
-
-
-def compare_checkpoints(checkpoint_dir="results/checkpoints/",
-                        n_episodes=20, num_flights=5,
-                        save_path="results/plots/checkpoint_comparison.png",
-                        workers=1):
-    """Compare performance across training checkpoints."""
-    checkpoints = sorted([
-        f for f in os.listdir(checkpoint_dir) if f.endswith(".zip")
-    ], key=lambda f: int(f.split("_")[-2]))
+def plot_compare_checkpoints(csv_path, save_path, num_flights):
+    import pandas as pd
+    import re
+    df = pd.read_csv(csv_path)
 
     steps = []
     mean_conflicts = []
     mean_targets = []
     conflict_free_pct = []
+    conflicts_ci = []
+    targets_ci = []
+
+    cols = df.columns
+    step_strs = set()
+    for c in cols:
+        m = re.match(r'Step_([0-9]+)_Conflicts', c)
+        if m:
+            step_strs.add(m.group(1))
+
+    sorted_steps = sorted([int(s) for s in step_strs])
+
+    for step in sorted_steps:
+        steps.append(step)
+        c_col = f"Step_{step}_Conflicts"
+        t_col = f"Step_{step}_Targets"
+        c_data = df[c_col].dropna().values
+        t_data = df[t_col].dropna().values
+        N = len(c_data)
+        
+        mean_conflicts.append(np.mean(c_data))
+        mean_targets.append(np.mean(t_data))
+        
+        cf = sum(1 for c in c_data if c == 0)
+        conflict_free_pct.append(100 * cf / N if N > 0 else 0)
+        
+        conflicts_ci.append(1.96 * np.std(c_data, ddof=1) / np.sqrt(N) if N > 1 else 0)
+        targets_ci.append(1.96 * np.std(t_data, ddof=1) / np.sqrt(N) if N > 1 else 0)
+
+    steps = np.array(steps)
+    mean_conflicts = np.array(mean_conflicts)
+    mean_targets = np.array(mean_targets)
+    conflict_free_pct = np.array(conflict_free_pct)
+    conflicts_ci = np.array(conflicts_ci)
+    targets_ci = np.array(targets_ci)
+
+    # Set publication-quality style
+    plt.rcParams['font.serif'] = ['Times New Roman', 'DejaVu Serif']
+    plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans']
+    plt.rcParams['font.size'] = 10
+    plt.rcParams['axes.labelsize'] = 10
+    plt.rcParams['axes.titlesize'] = 11
+    plt.rcParams['xtick.labelsize'] = 9
+    plt.rcParams['ytick.labelsize'] = 9
+    plt.rcParams['legend.fontsize'] = 9
+    plt.rcParams['lines.linewidth'] = 1.5
+    plt.rcParams['axes.linewidth'] = 0.8
+    plt.rcParams['grid.linewidth'] = 0.5
+
+    fig, axes = plt.subplots(1, 3, figsize=(16, 5))
+    fig.patch.set_facecolor('white')
+
+    # Helper function to style axes
+    def style_axis(ax):
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['left'].set_linewidth(0.8)
+        ax.spines['bottom'].set_linewidth(0.8)
+        ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.5, axis='y')
+        ax.set_axisbelow(True)
+
+    # Conflict rate
+    ax = axes[0]
+    ax.plot(steps, mean_conflicts, "o-", color="#D32F2F", linewidth=2, markersize=6, zorder=2)
+    ax.fill_between(steps, np.maximum(0, mean_conflicts - conflicts_ci), mean_conflicts + conflicts_ci, color="#D32F2F", alpha=0.15)
+    ax.set_xlabel("Training Steps", fontweight='normal')
+    ax.set_ylabel("Mean Conflicts per Episode", fontweight='normal')
+    ax.set_title("(a) Conflict Rate vs Training", fontweight='bold', loc='left')
+    style_axis(ax)
+
+    # Target completion
+    ax = axes[1]
+    ax.plot(steps, mean_targets, "o-", color="#388E3C", linewidth=2, markersize=6, zorder=2)
+    ax.fill_between(steps, np.maximum(0, mean_targets - targets_ci), mean_targets + targets_ci, color="#388E3C", alpha=0.15)
+    ax.axhline(num_flights, color='#424242', linestyle='--', linewidth=1.0, alpha=0.6, label=f"Maximum = {num_flights}", zorder=1)
+    ax.set_xlabel("Training Steps", fontweight='normal')
+    ax.set_ylabel("Mean Targets Reached", fontweight='normal')
+    ax.set_title("(b) Target Completion vs Training", fontweight='bold', loc='left')
+    ax.set_ylim(0, num_flights + 0.5)
+    ax.legend(loc='lower right', framealpha=0.9, edgecolor='black', fancybox=False)
+    style_axis(ax)
+
+    # Safety rate
+    ax = axes[2]
+    ax.plot(steps, conflict_free_pct, "o-", color="#1976D2", linewidth=2, markersize=6, zorder=2)
+    ax.set_xlabel("Training Steps", fontweight='normal')
+    ax.set_ylabel("Conflict-Free Episodes (%)", fontweight='normal')
+    ax.set_title("(c) Safety Rate vs Training", fontweight='bold', loc='left')
+    ax.set_ylim(-5, 105)
+    ax.axhline(100, color='#757575', linestyle=':', linewidth=0.8, alpha=0.5, zorder=0)
+    style_axis(ax)
+
+    fig.suptitle('ATC Training Progress: Checkpoint Comparison', fontsize=12, fontweight='bold', y=0.98)
+    plt.subplots_adjust(top=0.92, bottom=0.12, left=0.10, right=0.97, wspace=0.32)
+    
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path, dpi=300, bbox_inches="tight", facecolor='white', edgecolor='none')
+    print(f"Saved academic-quality checkpoint comparison plot to {save_path}")
+    plt.close()
+
+
+def _eval_checkpoint_worker(ckpt_path, step_num, n_episodes, num_flights):
+    """Worker to evaluate a single checkpoint (used by ProcessPoolExecutor)."""
+    metrics = _eval_episodes_worker(ckpt_path, list(range(n_episodes)), num_flights, deploy_all=True)
+    return step_num, metrics["conflicts"], metrics["targets_reached"]
+
+
+def compare_checkpoints(checkpoint_dir="results/checkpoints/",
+                        n_episodes=20, num_flights=5,
+                        save_path="results/plots/checkpoint_comparison.png",
+                        workers=1, save_csv=False):
+    """Compare performance across training checkpoints."""
+    checkpoints = sorted([
+        f for f in os.listdir(checkpoint_dir) if f.endswith(".zip")
+    ], key=lambda f: int(f.split("_")[-2]))
+
+    all_conflicts = {}
+    all_targets = {}
 
     if workers <= 1:
         # Sequential fallback
@@ -682,11 +838,8 @@ def compare_checkpoints(checkpoint_dir="results/checkpoints/",
             step_num = int(ckpt.split("_")[-2])
             print(f"Evaluating {ckpt} ({step_num} steps)...")
             metrics = _eval_episodes_worker(ckpt_path, list(range(n_episodes)), num_flights, deploy_all=True)
-            steps.append(step_num)
-            mean_conflicts.append(np.mean(metrics["conflicts"]))
-            mean_targets.append(np.mean(metrics["targets_reached"]))
-            cf = sum(1 for c in metrics["conflicts"] if c == 0)
-            conflict_free_pct.append(100 * cf / n_episodes)
+            all_conflicts[step_num] = metrics["conflicts"]
+            all_targets[step_num] = metrics["targets_reached"]
     else:
         print(f"Evaluating {len(checkpoints)} checkpoints across {workers} worker(s)...")
         with ProcessPoolExecutor(max_workers=workers) as executor:
@@ -696,17 +849,33 @@ def compare_checkpoints(checkpoint_dir="results/checkpoints/",
                 step_num = int(ckpt.split("_")[-2])
                 futures.append(executor.submit(_eval_checkpoint_worker, ckpt_path, step_num, n_episodes, num_flights))
             for future in futures:
-                step_num, mc, mt, cfp = future.result()
-                steps.append(step_num)
-                mean_conflicts.append(mc)
-                mean_targets.append(mt)
-                conflict_free_pct.append(cfp)
-        # Sort by step number since parallel results may arrive out of order
-        order = np.argsort(steps)
-        steps = [steps[i] for i in order]
-        mean_conflicts = [mean_conflicts[i] for i in order]
-        mean_targets = [mean_targets[i] for i in order]
-        conflict_free_pct = [conflict_free_pct[i] for i in order]
+                step_num, cfs, tgts = future.result()
+                all_conflicts[step_num] = cfs
+                all_targets[step_num] = tgts
+
+    if save_csv:
+        import pandas as pd
+        csv_path = save_path.replace(".png", ".csv")
+        data = {}
+        for step in sorted(all_conflicts.keys()):
+            data[f"Step_{step}_Conflicts"] = all_conflicts[step]
+            data[f"Step_{step}_Targets"] = all_targets[step]
+            
+        df = pd.DataFrame(data)
+        df.to_csv(csv_path, index=False)
+        print(f"Saved checkpoint comparison CSV to {csv_path}")
+        plot_compare_checkpoints(csv_path, save_path, num_flights)
+    else:
+        import pandas as pd
+        csv_path = save_path.replace(".png", "_temp.csv")
+        data = {}
+        for step in sorted(all_conflicts.keys()):
+            data[f"Step_{step}_Conflicts"] = all_conflicts[step]
+            data[f"Step_{step}_Targets"] = all_targets[step]
+        df = pd.DataFrame(data)
+        df.to_csv(csv_path, index=False)
+        plot_compare_checkpoints(csv_path, save_path, num_flights)
+        os.remove(csv_path)
 
     # Set publication-quality style
     plt.rcParams['font.serif'] = ['Times New Roman', 'DejaVu Serif']
@@ -775,7 +944,7 @@ def compare_checkpoints(checkpoint_dir="results/checkpoints/",
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ATC Model Visualization Tools")
-    parser.add_argument("command", choices=["training", "trajectory", "evaluate", "compare"],
+    parser.add_argument("command", choices=["training", "trajectory", "evaluate", "compare", "plot-compare"],
                         help="Which visualization to run")
     parser.add_argument("--run-dir", type=str, default="results",
                         help="The results directory to analyze (e.g., results/test_03drift_40conflict)")
@@ -787,8 +956,12 @@ if __name__ == "__main__":
                         help="Number of parallel worker processes for evaluation")
     parser.add_argument("--no-random-heading", action="store_true", 
                         help="Evaluate on perfectly straight initial headings instead of randomized ones.")
+    parser.add_argument("--save-csv", action="store_true",
+                        help="Save the metrics data to a CSV file.")
     parser.add_argument("--save-individual", action="store_true",
-                        help="Save 5 separate publication-quality plots instead of a single panel.")
+                        help="Save individual graphs for each metric.")
+    parser.add_argument("--csv-path", type=str, default=None,
+                        help="Path to CSV for plot-compare command")
     args = parser.parse_args()
     
     random_heading_val = not args.no_random_heading
@@ -808,18 +981,21 @@ if __name__ == "__main__":
                           random_heading=random_heading_val)
 
     elif args.command == "evaluate":
-        if args.save_individual:
-            metrics = run_evaluation(model_path, args.episodes, args.num_flights, deploy_all=True, workers=args.workers, random_heading=random_heading_val)
-            out_dir = os.path.join(args.run_dir, "plots", "evaluation_individual")
-            plot_publication_individual(metrics, out_dir, args.num_flights)
-        else:
-            plot_evaluation(model_path, args.episodes, args.num_flights,
-                            save_path=os.path.join(args.run_dir, "plots", "evaluation.png"),
-                            workers=args.workers, random_heading=random_heading_val)
+        plot_evaluation(model_path, args.episodes, args.num_flights,
+                        save_path=os.path.join(args.run_dir, "plots", "evaluation.png"),
+                        workers=args.workers, random_heading=random_heading_val,
+                        save_csv=args.save_csv, save_individual=args.save_individual)
 
     elif args.command == "compare":
         compare_checkpoints(checkpoint_dir=checkpoint_dir, 
                             n_episodes=args.episodes, 
                             num_flights=args.num_flights,
                             save_path=os.path.join(args.run_dir, "plots", "checkpoint_comparison.png"),
-                            workers=args.workers)
+                            workers=args.workers, save_csv=args.save_csv)
+
+    elif args.command == "plot-compare":
+        if not args.csv_path:
+            print("Error: --csv-path is required for plot-compare")
+        else:
+            save_path = os.path.join(os.path.dirname(args.csv_path), "checkpoint_comparison.png")
+            plot_compare_checkpoints(args.csv_path, save_path, args.num_flights)
