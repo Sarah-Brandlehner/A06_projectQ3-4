@@ -27,9 +27,10 @@ Commands (Modes):
 
     To evaluate hypotheses on a specific model, use the --run-dir argument:
     
-    python evaluate_hypotheses_changed.py airspace-sweep --run-dir results/thisone --episodes 100
+    python evaluate_hypotheses_changed.py airspace-sweep --run-dir results/thisone --episodes 1000 - runs for like 30 mins
     python evaluate_hypotheses_changed.py density-sweep --run-dir results/thisone
-    python evaluate_hypotheses_changed.py heatmap --run-dir results/thisone --episodes 2
+    python evaluate_hypotheses_changed.py heatmap --run-dir results/thisone --episodes 500 - prob run for around 250 or 500 episodes
+    python evaluate_hypotheses_changed.py uncertainty-ablation --run-dir results/best_model_run --episodes 2000 - run for around 20 mins
     python evaluate_hypotheses_changed.py all --run-dir results/thisone
 
     You can specify the number of episodes to run per condition using the --episodes argument (default is 100):

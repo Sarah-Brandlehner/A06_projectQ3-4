@@ -298,7 +298,7 @@ def plot_trajectories(model_path, num_flights=5, deploy_all=True,
     # Legend with custom patches
     start_patch = mpatches.Patch(color="#757575", label="● Start position")
     target_patch = mpatches.Patch(color="#757575", label="* Target")
-    conflict_patch = mpatches.Patch(color="#B71C1C", label="— Conflict (severity high)")
+    conflict_patch = mpatches.Patch(color="#B71C1C", label="— Conflict")
     restricted_patch = mpatches.Patch(color="#F9A825", label="— Restricted intrusion")
     normal_patch = mpatches.Patch(color="#757575", label="— Normal flight path")
     ax.legend(handles=[start_patch, target_patch, normal_patch, conflict_patch, restricted_patch], 
