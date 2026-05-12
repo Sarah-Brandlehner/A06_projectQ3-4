@@ -27,10 +27,9 @@ Commands (Modes):
 
     To evaluate hypotheses on a specific model, use the --run-dir argument:
     
-    python evaluate_hypotheses_changed.py airspace-sweep --run-dir results/thisone --episodes 1000 - runs for like 30 mins
+    python evaluate_hypotheses_changed.py airspace-sweep --run-dir results/thisoneLite/thisoneLite --episodes 20 --save-csv
     python evaluate_hypotheses_changed.py density-sweep --run-dir results/thisone
-    python evaluate_hypotheses_changed.py heatmap --run-dir results/thisone --episodes 500 - prob run for around 250 or 500 episodes
-    python evaluate_hypotheses_changed.py uncertainty-ablation --run-dir results/best_model_run --episodes 2000 - run for around 20 mins
+    python evaluate_hypotheses_changed.py heatmap --run-dir results/thisone --episodes 2
     python evaluate_hypotheses_changed.py all --run-dir results/thisone
 
     You can specify the number of episodes to run per condition using the --episodes argument (default is 100):
@@ -45,6 +44,12 @@ Commands (Modes):
     To plot the reward progression (Hypothesis E), you must provide the Tensorboard log directories instead of a run directory:
     
     python evaluate_hypotheses.py reward-progress --incremental-dir results/incremental_logs --baseline-dir results/baseline_logs
+
+    Plotting directly from CSV's:
+    python evaluate_hypotheses_changed.py plot-airspace --csv-path results/thisoneLite/thisoneLite/hypotheses_plots/airspace_sweep.csv
+python evaluate_hypotheses_changed.py plot-density --csv-path results/thisoneLite/thisoneLite/hypotheses_plots/density_sweep.csv
+python evaluate_hypotheses_changed.py plot-uncertainty --csv-path results/thisoneLite/thisoneLite/hypotheses_plots/uncertainty_ablation.csv
+ 
 
 """
 
@@ -187,50 +192,61 @@ def eval_worker(model_path, env_kwargs, num_flights, episodes):
         drifts.append(d)
     return conflict_episodes, intrusion_episodes, drifts
 
-def sweep_airspace(model_path, out_dir, episodes, default_flights=10):
-    print("Running Airspace Area Sweep (Parallelized)...")
-    ratios = np.arange(0.10, 0.525, 0.025)
-    cf_fail_rates = []  # % of episodes with any conflict
-    if_fail_rates = []  # % of episodes with any intrusion
-    cf_stds = []
-    if_stds = []
-
-    with ProcessPoolExecutor() as executor:
-        futures = []
-        for ratio in ratios:
-            futures.append(executor.submit(eval_worker, model_path, {'restricted_area_ratio': ratio}, default_flights, episodes))
-
-        for future in tqdm(futures, desc="Airspace Sweep"):
-            conflict_episodes, intrusion_episodes, _ = future.result()
-            cf_fail = np.mean(conflict_episodes) * 100
-            if_fail = np.mean(intrusion_episodes) * 100
-            cf_fail_rates.append(cf_fail)
-            if_fail_rates.append(if_fail)
-            cf_stds.append(np.std(conflict_episodes) * 100)
-            if_stds.append(np.std(intrusion_episodes) * 100)
+def plot_airspace_sweep(csv_path, out_dir):
+    import pandas as pd
+    import re
+    df = pd.read_csv(csv_path)
+    
+    ratios = []
+    cf_fail_rates = []
+    if_fail_rates = []
+    cf_ci = []
+    if_ci = []
+    
+    cols = df.columns
+    ratio_strs = set()
+    for c in cols:
+        m = re.match(r'Ratio_([0-9.]+)_Conflicts', c)
+        if m:
+            ratio_strs.add(m.group(1))
+            
+    sorted_ratio_strs = sorted(list(ratio_strs), key=float)
+    
+    for r_str in sorted_ratio_strs:
+        ratios.append(float(r_str))
+        c_col = f"Ratio_{r_str}_Conflicts"
+        i_col = f"Ratio_{r_str}_Intrusions"
+        c_data = df[c_col].dropna().values
+        i_data = df[i_col].dropna().values
+        N_c = len(c_data)
+        N_i = len(i_data)
+        cf_fail_rates.append(np.mean(c_data) * 100)
+        if_fail_rates.append(np.mean(i_data) * 100)
+        cf_ci.append(1.96 * (np.std(c_data, ddof=1) * 100) / np.sqrt(N_c) if N_c > 1 else 0)
+        if_ci.append(1.96 * (np.std(i_data, ddof=1) * 100) / np.sqrt(N_i) if N_i > 1 else 0)
 
     cf_fail_rates = np.array(cf_fail_rates)
     if_fail_rates = np.array(if_fail_rates)
-    cf_stds = np.array(cf_stds)
-    if_stds = np.array(if_stds)
+    cf_ci = np.array(cf_ci)
+    if_ci = np.array(if_ci)
 
     fig, ax1 = plt.subplots(figsize=(10, 6))
-    ax1.set_xlabel('Restricted Airspace Ratio (Fraction of Total Area)')
+    ax1.set_xlabel('Restricted Airspace Ratio')
     ax1.set_ylabel('Episodes w/ Conflict (%)', color='tab:blue')
     ax1.plot(ratios, cf_fail_rates, color='tab:blue', marker='o', linewidth=1.5, label='Conflict Episode Rate')
-    ax1.fill_between(ratios, np.maximum(0, cf_fail_rates - cf_stds), cf_fail_rates + cf_stds, color='tab:blue', alpha=0.15)
+    ax1.fill_between(ratios, np.maximum(0, cf_fail_rates - cf_ci), cf_fail_rates + cf_ci, color='tab:blue', alpha=0.15)
     ax1.tick_params(axis='y', labelcolor='tab:blue')
     ax1.grid(True, alpha=0.3, linestyle='--')
 
     ax2 = ax1.twinx()
     ax2.set_ylabel('Episodes w/ Intrusion (%)', color='tab:orange')
     ax2.plot(ratios, if_fail_rates, color='tab:orange', marker='s', linewidth=1.5, linestyle='--', label='Intrusion Episode Rate')
-    ax2.fill_between(ratios, np.maximum(0, if_fail_rates - if_stds), if_fail_rates + if_stds, color='tab:orange', alpha=0.15)
+    ax2.fill_between(ratios, np.maximum(0, if_fail_rates - if_ci), if_fail_rates + if_ci, color='tab:orange', alpha=0.15)
     ax2.tick_params(axis='y', labelcolor='tab:orange')
 
     ax1.axvline(x=0.20, color='gray', linestyle=':', label='Training Environment Area (20%)')
 
-    ylim_max = max(np.max(cf_fail_rates + cf_stds), np.max(if_fail_rates + if_stds)) * 1.1 + 2
+    ylim_max = max(np.max(cf_fail_rates + cf_ci), np.max(if_fail_rates + if_ci)) * 1.1 + 2
     if ylim_max < 20: ylim_max = 20
     ax1.set_ylim([-2, ylim_max])
     ax2.set_ylim([-2, ylim_max])
@@ -240,41 +256,90 @@ def sweep_airspace(model_path, out_dir, episodes, default_flights=10):
     plt.close()
     print("Saved airspace_sweep.png")
 
-def sweep_density(model_path, out_dir, episodes):
-    print("Running Density Sweep (Parallelized)...")
-    densities = np.arange(10, 31, 1) # from 10 to 30
-    cf_fail_rates = []  # % of episodes with any conflict
-    if_fail_rates = []  # % of episodes with any intrusion
-    cf_stds = []
-    if_stds = []
-    drifts = []
+def sweep_airspace(model_path, out_dir, episodes, default_flights=10, save_csv=False):
+    print("Running Airspace Area Sweep (Parallelized)...")
+    ratios = np.arange(0.10, 0.525, 0.025)
+    
+    all_conflict_episodes = {}
+    all_intrusion_episodes = {}
 
     with ProcessPoolExecutor() as executor:
-        futures = []
-        for num_flights in densities:
-            futures.append(executor.submit(eval_worker, model_path, {}, num_flights, episodes))
+        futures = {ratio: executor.submit(eval_worker, model_path, {'restricted_area_ratio': ratio}, default_flights, episodes) for ratio in ratios}
 
-        for i, future in enumerate(tqdm(futures, desc="Density Sweep")):
-            conflict_episodes, intrusion_episodes, drift_arr = future.result()
-            cf_fail = np.mean(conflict_episodes) * 100
-            if_fail = np.mean(intrusion_episodes) * 100
-            cf_fail_rates.append(cf_fail)
-            if_fail_rates.append(if_fail)
-            cf_stds.append(np.std(conflict_episodes) * 100)
-            if_stds.append(np.std(intrusion_episodes) * 100)
-            drifts.append(drift_arr)
+        for ratio, future in tqdm(futures.items(), desc="Airspace Sweep"):
+            conflict_episodes, intrusion_episodes, _ = future.result()
+            all_conflict_episodes[ratio] = conflict_episodes
+            all_intrusion_episodes[ratio] = intrusion_episodes
+
+    if save_csv:
+        import pandas as pd
+        data = {}
+        for ratio in ratios:
+            data[f"Ratio_{ratio:.3f}_Conflicts"] = all_conflict_episodes[ratio]
+            data[f"Ratio_{ratio:.3f}_Intrusions"] = all_intrusion_episodes[ratio]
+        
+        df = pd.DataFrame(data)
+        csv_path = os.path.join(out_dir, "airspace_sweep.csv")
+        df.to_csv(csv_path, index=False)
+        print(f"Saved airspace sweep metrics to {csv_path}")
+        plot_airspace_sweep(csv_path, out_dir)
+    else:
+        # Save a temporary CSV to plot from
+        import pandas as pd
+        data = {}
+        for ratio in ratios:
+            data[f"Ratio_{ratio:.3f}_Conflicts"] = all_conflict_episodes[ratio]
+            data[f"Ratio_{ratio:.3f}_Intrusions"] = all_intrusion_episodes[ratio]
+        df = pd.DataFrame(data)
+        csv_path = os.path.join(out_dir, "temp_airspace_sweep.csv")
+        df.to_csv(csv_path, index=False)
+        plot_airspace_sweep(csv_path, out_dir)
+        os.remove(csv_path)
+
+def plot_density_sweep(csv_path, out_dir):
+    import pandas as pd
+    import re
+    df = pd.read_csv(csv_path)
+    
+    densities = []
+    cf_fail_rates = []
+    if_fail_rates = []
+    cf_ci = []
+    if_ci = []
+    
+    cols = df.columns
+    dens_strs = set()
+    for c in cols:
+        m = re.match(r'Density_([0-9]+)_Conflicts', c)
+        if m:
+            dens_strs.add(m.group(1))
+            
+    sorted_dens = sorted([int(d) for d in dens_strs])
+    
+    for d in sorted_dens:
+        densities.append(d)
+        c_col = f"Density_{d}_Conflicts"
+        i_col = f"Density_{d}_Intrusions"
+        c_data = df[c_col].dropna().values
+        i_data = df[i_col].dropna().values
+        N_c = len(c_data)
+        N_i = len(i_data)
+        cf_fail_rates.append(np.mean(c_data) * 100)
+        if_fail_rates.append(np.mean(i_data) * 100)
+        cf_ci.append(1.96 * (np.std(c_data, ddof=1) * 100) / np.sqrt(N_c) if N_c > 1 else 0)
+        if_ci.append(1.96 * (np.std(i_data, ddof=1) * 100) / np.sqrt(N_i) if N_i > 1 else 0)
 
     cf_fail_rates = np.array(cf_fail_rates)
     if_fail_rates = np.array(if_fail_rates)
-    cf_stds = np.array(cf_stds)
-    if_stds = np.array(if_stds)
+    cf_ci = np.array(cf_ci)
+    if_ci = np.array(if_ci)
 
     fig, ax = plt.subplots(figsize=(10, 6))
     ax.plot(densities, cf_fail_rates, color='tab:blue', marker='o', linewidth=1.5, label='Conflict Episode Rate')
-    ax.fill_between(densities, np.maximum(0, cf_fail_rates - cf_stds), cf_fail_rates + cf_stds, color='tab:blue', alpha=0.15)
+    ax.fill_between(densities, np.maximum(0, cf_fail_rates - cf_ci), cf_fail_rates + cf_ci, color='tab:blue', alpha=0.15)
 
     ax.plot(densities, if_fail_rates, color='tab:orange', marker='s', linewidth=1.5, label='Intrusion Episode Rate')
-    ax.fill_between(densities, np.maximum(0, if_fail_rates - if_stds), if_fail_rates + if_stds, color='tab:orange', alpha=0.15)
+    ax.fill_between(densities, np.maximum(0, if_fail_rates - if_ci), if_fail_rates + if_ci, color='tab:orange', alpha=0.15)
 
     ax.axhline(y=20, color='red', linestyle='--', label='Limit Threshold')
 
@@ -292,41 +357,79 @@ def sweep_density(model_path, out_dir, episodes):
     plt.close()
     print("Saved density_sweep.png")
 
-def sweep_uncertainties(model_path, out_dir, episodes, default_flights=10):
-    print("Running Uncertainty Ablation Sweep (Parallelized)...")
-    experiments = [
-        ("Base (Ideal)", {}),
-        ("Scramble Only", {'enable_position_uncertainty': True}),
-        ("Wind Only", {'enable_wind': True}),
-        ("Delay Only", {'enable_delay': True}),
-        ("All Uncertainties", {'enable_position_uncertainty': True, 'enable_wind': True, 'enable_delay': True})
-    ]
+
+def sweep_density(model_path, out_dir, episodes, save_csv=False):
+    print("Running Density Sweep (Parallelized)...")
+    densities = np.arange(10, 31, 1) # from 10 to 30
     
-    cf_rates = []; if_rates = []
-    cf_stds = []; if_stds = []
-    names = []
+    all_conflict_episodes = {}
+    all_intrusion_episodes = {}
 
     with ProcessPoolExecutor() as executor:
-        futures = []
-        for name, config in experiments:
-            futures.append(executor.submit(eval_worker, model_path, config, default_flights, episodes))
-            names.append(name)
+        futures = {d: executor.submit(eval_worker, model_path, {}, d, episodes) for d in densities}
 
-        for future in tqdm(futures, desc="Uncertainty Ablation"):
-            cfs_list, ifs_list, _ = future.result()
-            cf_rates.append(np.mean(cfs_list) * 100)
-            if_rates.append(np.mean(ifs_list) * 100)
-            cf_stds.append(np.std(cfs_list) * 100)
-            if_stds.append(np.std(ifs_list) * 100)
+        for d, future in tqdm(futures.items(), desc="Density Sweep"):
+            conflict_episodes, intrusion_episodes, drift_arr = future.result()
+            all_conflict_episodes[d] = conflict_episodes
+            all_intrusion_episodes[d] = intrusion_episodes
+
+    if save_csv:
+        import pandas as pd
+        data = {}
+        for d in densities:
+            data[f"Density_{d}_Conflicts"] = all_conflict_episodes[d]
+            data[f"Density_{d}_Intrusions"] = all_intrusion_episodes[d]
+        df = pd.DataFrame(data)
+        csv_path = os.path.join(out_dir, "density_sweep.csv")
+        df.to_csv(csv_path, index=False)
+        print(f"Saved density sweep metrics to {csv_path}")
+        plot_density_sweep(csv_path, out_dir)
+    else:
+        import pandas as pd
+        data = {}
+        for d in densities:
+            data[f"Density_{d}_Conflicts"] = all_conflict_episodes[d]
+            data[f"Density_{d}_Intrusions"] = all_intrusion_episodes[d]
+        df = pd.DataFrame(data)
+        csv_path = os.path.join(out_dir, "temp_density_sweep.csv")
+        df.to_csv(csv_path, index=False)
+        plot_density_sweep(csv_path, out_dir)
+        os.remove(csv_path)
+
+def plot_uncertainties_sweep(csv_path, out_dir):
+    import pandas as pd
+    df = pd.read_csv(csv_path)
+    
+    names = []
+    cf_rates = []
+    if_rates = []
+    cf_ci = []
+    if_ci = []
+    
+    expected_names = ["Base (Ideal)", "Scramble Only", "Wind Only", "Delay Only", "All Uncertainties"]
+    
+    for name in expected_names:
+        c_col = f"Condition_{name}_Conflicts"
+        i_col = f"Condition_{name}_Intrusions"
+        if c_col in df.columns and i_col in df.columns:
+            names.append(name)
+            c_data = df[c_col].dropna().values
+            i_data = df[i_col].dropna().values
+            N_c = len(c_data)
+            N_i = len(i_data)
+            cf_rates.append(np.mean(c_data) * 100)
+            if_rates.append(np.mean(i_data) * 100)
+            cf_ci.append(1.96 * (np.std(c_data, ddof=1) * 100) / np.sqrt(N_c) if N_c > 1 else 0)
+            if_ci.append(1.96 * (np.std(i_data, ddof=1) * 100) / np.sqrt(N_i) if N_i > 1 else 0)
 
     x = np.arange(len(names))
     width = 0.35
 
     fig, ax = plt.subplots(figsize=(10, 6))
-    cf_lower_error = np.minimum(cf_rates, cf_stds)
-    if_lower_error = np.minimum(if_rates, if_stds)
-    rects1 = ax.bar(x - width/2, cf_rates, width, yerr=[cf_lower_error, cf_stds], capsize=4, label='Conflict Episode Rate', color='#aec7e8', edgecolor='#1f77b4')
-    rects2 = ax.bar(x + width/2, if_rates, width, yerr=[if_lower_error, if_stds], capsize=4, label='Intrusion Episode Rate', color='#ffbb78', edgecolor='#ff7f0e')
+    cf_lower_error = np.minimum(cf_rates, cf_ci)
+    if_lower_error = np.minimum(if_rates, if_ci)
+    rects1 = ax.bar(x - width/2, cf_rates, width, yerr=[cf_lower_error, cf_ci], capsize=4, label='Conflict Episode Rate', color='#aec7e8', edgecolor='#1f77b4')
+    rects2 = ax.bar(x + width/2, if_rates, width, yerr=[if_lower_error, if_ci], capsize=4, label='Intrusion Episode Rate', color='#ffbb78', edgecolor='#ff7f0e')
 
     ax.set_ylabel('Episodes with Errors (%)')
     ax.set_xticks(x)
@@ -342,6 +445,50 @@ def sweep_uncertainties(model_path, out_dir, episodes, default_flights=10):
     plt.savefig(os.path.join(out_dir, "uncertainty_ablation.png"), dpi=200, bbox_inches='tight')
     plt.close()
     print("Saved uncertainty_ablation.png")
+
+def sweep_uncertainties(model_path, out_dir, episodes, default_flights=10, save_csv=False):
+    print("Running Uncertainty Ablation Sweep (Parallelized)...")
+    experiments = [
+        ("Base (Ideal)", {}),
+        ("Scramble Only", {'enable_position_uncertainty': True}),
+        ("Wind Only", {'enable_wind': True}),
+        ("Delay Only", {'enable_delay': True}),
+        ("All Uncertainties", {'enable_position_uncertainty': True, 'enable_wind': True, 'enable_delay': True})
+    ]
+    
+    all_conflict_episodes = {}
+    all_intrusion_episodes = {}
+
+    with ProcessPoolExecutor() as executor:
+        futures = {name: executor.submit(eval_worker, model_path, config, default_flights, episodes) for name, config in experiments}
+
+        for name, future in tqdm(futures.items(), desc="Uncertainty Ablation"):
+            cfs_list, ifs_list, _ = future.result()
+            all_conflict_episodes[name] = cfs_list
+            all_intrusion_episodes[name] = ifs_list
+
+    if save_csv:
+        import pandas as pd
+        data = {}
+        for name, _ in experiments:
+            data[f"Condition_{name}_Conflicts"] = all_conflict_episodes[name]
+            data[f"Condition_{name}_Intrusions"] = all_intrusion_episodes[name]
+        df = pd.DataFrame(data)
+        csv_path = os.path.join(out_dir, "uncertainty_ablation.csv")
+        df.to_csv(csv_path, index=False)
+        print(f"Saved uncertainty ablation metrics to {csv_path}")
+        plot_uncertainties_sweep(csv_path, out_dir)
+    else:
+        import pandas as pd
+        data = {}
+        for name, _ in experiments:
+            data[f"Condition_{name}_Conflicts"] = all_conflict_episodes[name]
+            data[f"Condition_{name}_Intrusions"] = all_intrusion_episodes[name]
+        df = pd.DataFrame(data)
+        csv_path = os.path.join(out_dir, "temp_uncertainty_ablation.csv")
+        df.to_csv(csv_path, index=False)
+        plot_uncertainties_sweep(csv_path, out_dir)
+        os.remove(csv_path)
 
 def generate_heatmap(model, out_dir, episodes, default_flights=10):
     """
@@ -492,12 +639,14 @@ def plot_reward_progress(incremental_dir, baseline_dir, out_dir):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('mode', choices=['airspace-sweep', 'density-sweep', 'uncertainty-ablation', 'reward-progress', 'heatmap', 'all'])
+    parser.add_argument('mode', choices=['airspace-sweep', 'density-sweep', 'uncertainty-ablation', 'reward-progress', 'heatmap', 'all', 'plot-airspace', 'plot-density', 'plot-uncertainty'])
     parser.add_argument('--run-dir', required=False, help="Path to run directory containing best_model/best_model.zip")
     parser.add_argument('--episodes', default=100, type=int, help="Number of episodes to run per condition")
     parser.add_argument('--incremental-dir', default=None, help="Tensorboard log dir for stepwise training (Hypothesis E)")
     parser.add_argument('--baseline-dir', default=None, help="Tensorboard log dir for baseline training (Hypothesis E)")
     parser.add_argument('--baseline-model', default=None, help="Path to baseline model dir (e.g. Adam's 30-dim obs model)")
+    parser.add_argument('--save-csv', action='store_true', help="Save evaluation metrics to CSV files.")
+    parser.add_argument('--csv-path', default=None, help="Path to the CSV file to plot from (for plot-* modes)")
     args = parser.parse_args()
     
     # Set academic plot defaults
@@ -506,8 +655,23 @@ if __name__ == '__main__':
     out_dir = "results/hypotheses_plots"
     if args.run_dir:
         out_dir = os.path.join(args.run_dir, "hypotheses_plots")
+    elif args.csv_path:
+        out_dir = os.path.dirname(args.csv_path)
     os.makedirs(out_dir, exist_ok=True)
     print(f"Artifacts will be stored in {out_dir}")
+
+    if args.mode == 'plot-airspace':
+        if not args.csv_path: print("Error: --csv-path is required")
+        else: plot_airspace_sweep(args.csv_path, out_dir)
+        exit(0)
+    elif args.mode == 'plot-density':
+        if not args.csv_path: print("Error: --csv-path is required")
+        else: plot_density_sweep(args.csv_path, out_dir)
+        exit(0)
+    elif args.mode == 'plot-uncertainty':
+        if not args.csv_path: print("Error: --csv-path is required")
+        else: plot_uncertainties_sweep(args.csv_path, out_dir)
+        exit(0)
 
     if args.mode in ['reward-progress', 'all']:
         if args.incremental_dir or args.baseline_dir:
@@ -537,11 +701,11 @@ if __name__ == '__main__':
             os.makedirs(out_dir, exist_ok=True)
         
         if args.mode in ['airspace-sweep', 'all']:
-            sweep_airspace(model_path, out_dir, args.episodes)
+            sweep_airspace(model_path, out_dir, args.episodes, save_csv=args.save_csv)
         if args.mode in ['density-sweep', 'all']:
-            sweep_density(model_path, out_dir, args.episodes)
+            sweep_density(model_path, out_dir, args.episodes, save_csv=args.save_csv)
         if args.mode in ['uncertainty-ablation', 'all']:
-            sweep_uncertainties(model_path, out_dir, args.episodes)
+            sweep_uncertainties(model_path, out_dir, args.episodes, save_csv=args.save_csv)
         if args.mode in ['heatmap', 'all']:
             model = SAC.load(model_path)
             generate_heatmap(model, out_dir, args.episodes)
