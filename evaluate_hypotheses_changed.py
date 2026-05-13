@@ -28,7 +28,7 @@ Commands (Modes):
     To evaluate hypotheses on a specific model, use the --run-dir argument:
     
     python evaluate_hypotheses_changed.py airspace-sweep --run-dir results/thisoneLite/thisoneLite --episodes 20 --save-csv
-    python evaluate_hypotheses_changed.py density-sweep --run-dir results/thisone
+    python evaluate_hypotheses_changed.py density-sweep --run-dir results/thisoneLite/thisoneLite --episodes 20 --save-csv
     python evaluate_hypotheses_changed.py heatmap --run-dir results/thisone --episodes 2
     python evaluate_hypotheses_changed.py all --run-dir results/thisone
 
@@ -47,8 +47,8 @@ Commands (Modes):
 
     Plotting directly from CSV's:
     python evaluate_hypotheses_changed.py plot-airspace --csv-path results/thisoneLite/thisoneLite/hypotheses_plots/airspace_sweep.csv
-python evaluate_hypotheses_changed.py plot-density --csv-path results/thisoneLite/thisoneLite/hypotheses_plots/density_sweep.csv
-python evaluate_hypotheses_changed.py plot-uncertainty --csv-path results/thisoneLite/thisoneLite/hypotheses_plots/uncertainty_ablation.csv
+    python evaluate_hypotheses_changed.py plot-density --csv-path results/thisoneLite/thisoneLite/hypotheses_plots/density_sweep.csv
+    python evaluate_hypotheses_changed.py plot-uncertainty --csv-path results/thisoneLite/thisoneLite/hypotheses_plots/uncertainty_ablation.csv
  
 
 """
@@ -366,7 +366,8 @@ def sweep_density(model_path, out_dir, episodes, save_csv=False):
     all_intrusion_episodes = {}
 
     with ProcessPoolExecutor() as executor:
-        futures = {d: executor.submit(eval_worker, model_path, {}, d, episodes) for d in densities}
+        # Pass a smaller distance_init_buffer (2.0) and enable relaxation to allow aircraft to fit at high densities
+        futures = {d: executor.submit(eval_worker, model_path, {'distance_init_buffer': 2.0, 'enable_spawn_relaxation': True}, d, episodes) for d in densities}
 
         for d, future in tqdm(futures.items(), desc="Density Sweep"):
             conflict_episodes, intrusion_episodes, drift_arr = future.result()

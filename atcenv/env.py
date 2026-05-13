@@ -52,6 +52,7 @@ class Environment(gym.Env):
                  min_distance: Optional[float] = 5.,
                  distance_init_buffer: Optional[float] = 5.,
                  random_init_heading: bool = True,
+                 enable_spawn_relaxation: bool = False,
                  **kwargs):
         """
         Initialises the environment
@@ -65,6 +66,7 @@ class Environment(gym.Env):
         self.max_episode_len = max_episode_len
         self.distance_init_buffer = distance_init_buffer
         self.random_init_heading = random_init_heading
+        self.enable_spawn_relaxation = enable_spawn_relaxation
         self.dt = dt
 
         # tolerance to consider that the target has been reached (in meters)
@@ -468,16 +470,35 @@ class Environment(gym.Env):
         tol = self.distance_init_buffer * self.tol
         min_distance = self.distance_init_buffer * self.min_distance
         
+        current_buffer = self.distance_init_buffer
+        attempts = 0
         while len(self.flights) < self.num_flights:
+            # Separation required for this attempt
+            min_dist_required = current_buffer * self.min_distance
+            
+            candidate = Flight.random(self.airspace, self.min_speed, self.max_speed, tol, 
+                                     random_init_heading=self.random_init_heading, 
+                                     restricted_airspace=self.restricted_airspace)
             valid = True
-            candidate = Flight.random(self.airspace, self.min_speed, self.max_speed, tol, random_init_heading=self.random_init_heading, restricted_airspace=self.restricted_airspace)
             for f in self.flights:
-                # Replaced shapely distance with math.hypot for fast reset
-                if math.hypot(candidate.position.x - f.position.x, candidate.position.y - f.position.y) < min_distance:
+                if math.hypot(candidate.position.x - f.position.x, candidate.position.y - f.position.y) < min_dist_required:
                     valid = False
                     break
+            
             if valid:
                 self.flights.append(candidate)
+                attempts = 0 # reset for next plane
+            else:
+                attempts += 1
+                if attempts > 100 and self.enable_spawn_relaxation:
+                    # Relax buffer slightly and try again (evaluation only)
+                    current_buffer = max(1.1, current_buffer * 0.9)
+                    attempts = 0
+                elif attempts > 2000:
+                    # Safety break for training - log error and proceed to avoid hang
+                    print(f"Warning: Could not find valid spawn after {attempts} attempts. Training might hang. Check airspace size or num_flights.")
+                    break
+                    # if current_buffer == 1.1: we are at the safety limit, just keep trying at 1.1
 
         self.i = 0
         self.conflicts = set()
