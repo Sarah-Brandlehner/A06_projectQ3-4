@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import matplotlib
 from tqdm import tqdm
 from stable_baselines3 import SAC
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 
 from atcenv.env import Environment, NUMBER_INTRUDERS_STATE
 from visualize import normalize_obs
@@ -28,7 +28,7 @@ Commands (Modes):
     To evaluate hypotheses on a specific model, use the --run-dir argument:
     
     python evaluate_hypotheses_changed.py airspace-sweep --run-dir results/thisoneLite/thisoneLite --episodes 20 --save-csv
-    python evaluate_hypotheses_changed.py density-sweep --run-dir results/thisone
+    python evaluate_hypotheses_changed.py density-sweep --run-dir results/thisone --episodes 10 --save-csv
     python evaluate_hypotheses_changed.py heatmap --run-dir results/thisone --episodes 2
     python evaluate_hypotheses_changed.py all --run-dir results/thisone
 
@@ -359,41 +359,57 @@ def plot_density_sweep(csv_path, out_dir):
 
 
 def sweep_density(model_path, out_dir, episodes, save_csv=False):
-    print("Running Density Sweep (Parallelized)...")
-    densities = np.arange(10, 31, 1) # from 10 to 30
+    print(f"Running Density Sweep ({episodes} episodes per point)...")
+    densities = np.arange(10, 31, 1)
     
-    all_conflict_episodes = {}
-    all_intrusion_episodes = {}
-
-    with ProcessPoolExecutor() as executor:
-        futures = {d: executor.submit(eval_worker, model_path, {}, d, episodes) for d in densities}
-
-        for d, future in tqdm(futures.items(), desc="Density Sweep"):
-            conflict_episodes, intrusion_episodes, drift_arr = future.result()
-            all_conflict_episodes[d] = conflict_episodes
-            all_intrusion_episodes[d] = intrusion_episodes
-
-    if save_csv:
-        import pandas as pd
-        data = {}
+    # Store results in lists
+    results_conflict = {d: [] for d in densities}
+    results_intrusion = {d: [] for d in densities}
+    
+    # Break episodes into smaller chunks (e.g., 25 episodes per task)
+    # This ensures all CPU cores stay busy until the very last episode.
+    chunk_size = 5
+    
+    with ProcessPoolExecutor(max_workers=7) as executor:
+        futures_to_density = {}
+        
         for d in densities:
-            data[f"Density_{d}_Conflicts"] = all_conflict_episodes[d]
-            data[f"Density_{d}_Intrusions"] = all_intrusion_episodes[d]
-        df = pd.DataFrame(data)
-        csv_path = os.path.join(out_dir, "density_sweep.csv")
-        df.to_csv(csv_path, index=False)
-        print(f"Saved density sweep metrics to {csv_path}")
-        plot_density_sweep(csv_path, out_dir)
-    else:
-        import pandas as pd
-        data = {}
-        for d in densities:
-            data[f"Density_{d}_Conflicts"] = all_conflict_episodes[d]
-            data[f"Density_{d}_Intrusions"] = all_intrusion_episodes[d]
-        df = pd.DataFrame(data)
-        csv_path = os.path.join(out_dir, "temp_density_sweep.csv")
-        df.to_csv(csv_path, index=False)
-        plot_density_sweep(csv_path, out_dir)
+            remaining = episodes
+            while remaining > 0:
+                n = min(chunk_size, remaining)
+                # Submit a chunk of n episodes for density d
+                future = executor.submit(eval_worker, model_path, {}, d, n)
+                futures_to_density[future] = d
+                remaining -= n
+
+        # as_completed updates the bar every time a chunk finishes
+        for future in tqdm(as_completed(futures_to_density), 
+                          total=len(futures_to_density), 
+                          desc="Density Sweep Progress"):
+            d = futures_to_density[future]
+            try:
+                conflict_episodes, intrusion_episodes, _ = future.result()
+                results_conflict[d].extend(conflict_episodes)
+                results_intrusion[d].extend(intrusion_episodes)
+            except Exception as exc:
+                print(f"Density {d} generated an exception: {exc}")
+
+    # --- Data Saving Logic ---
+    import pandas as pd
+    data = {}
+    for d in densities:
+        data[f"Density_{d}_Conflicts"] = results_conflict[d]
+        data[f"Density_{d}_Intrusions"] = results_intrusion[d]
+    
+    df = pd.DataFrame(data)
+    filename = "density_sweep.csv" if save_csv else "temp_density_sweep.csv"
+    csv_path = os.path.join(out_dir, filename)
+    df.to_csv(csv_path, index=False)
+    
+    print(f"Simulations complete. Generating plot...")
+    plot_density_sweep(csv_path, out_dir)
+    
+    if not save_csv:
         os.remove(csv_path)
 
 def plot_uncertainties_sweep(csv_path, out_dir):
