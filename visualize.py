@@ -890,6 +890,23 @@ def compare_checkpoints(checkpoint_dir="results/checkpoints/",
     plt.rcParams['axes.linewidth'] = 0.8
     plt.rcParams['grid.linewidth'] = 0.5
 
+
+    # --- NEW: CALCULATE METRICS FOR PLOTTING ---
+    # This section was missing, which caused your NameError crashes.
+    steps = sorted(all_conflicts.keys())
+    mean_conflicts = []
+    mean_targets = []
+    conflict_free_pct = []
+
+    for s in steps:
+        c_data = np.array(all_conflicts[s])
+        t_data = np.array(all_targets[s])
+        mean_conflicts.append(np.mean(c_data))
+        mean_targets.append(np.mean(t_data))
+        # Calculate safety rate (Conflict-Free %)
+        cf_count = sum(1 for c in c_data if c == 0)
+        conflict_free_pct.append(100.0 * cf_count / len(c_data) if len(c_data) > 0 else 0)
+
     fig, axes = plt.subplots(1, 3, figsize=(16, 5))
     fig.patch.set_facecolor('white')
 
