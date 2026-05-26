@@ -14,7 +14,18 @@
       "Bash(python bench_mvp.py --episodes 60 --num-flights 10 --workers 6 --tag \"v4_10f\")",
       "Bash(python bench_mvp.py --episodes 60 --num-flights 10 --workers 6 --tag \"v4b_10f\")",
       "Bash(python bench_mvp.py --episodes 60 --num-flights 10 --workers 6 --tag \"v4c_10f\")",
-      "Bash(python bench_mvp.py --episodes 60 --num-flights 10 --workers 6 --tag \"v5_10f\")"
+      "Bash(python bench_mvp.py --episodes 60 --num-flights 10 --workers 6 --tag \"v5_10f\")",
+      "Bash(python bench_mvp.py --episodes 30 --num-flights 10 --workers 4 --tag \"v5-improved\" --resolver improved)",
+      "Bash(python bench_mvp.py --episodes 30 --num-flights 10 --workers 4 --tag \"v0-baseline\" --resolver original)",
+      "Bash(python bench_mvp.py --episodes 30 --num-flights 10 --workers 4 --tag \"v5-tuned\" --resolver improved)",
+      "Bash(python bench_mvp.py --episodes 50 --num-flights 10 --workers 4 --tag \"v5-cpa-dir-original\" --resolver improved)",
+      "Bash(python bench_mvp.py --episodes 50 --num-flights 10 --workers 4 --tag \"v0-baseline\" --resolver original)",
+      "Bash(python bench_mvp.py --episodes 50 --num-flights 10 --workers 4 --tag \"v5-clean\" --resolver improved)",
+      "Bash(python bench_mvp.py --episodes 50 --num-flights 10 --workers 4 --tag \"v5-converge-only\" --resolver improved)",
+      "Bash(python bench_mvp.py --episodes 100 --num-flights 10 --workers 6 --tag \"v5-converge-fix\" --resolver improved)",
+      "Bash(python bench_mvp.py --episodes 100 --num-flights 10 --workers 6 --tag \"v0-baseline\" --resolver original)",
+      "Bash(python bench_mvp.py --episodes 100 --num-flights 10 --workers 6 --tag \"restored-v4\" --resolver improved)",
+      "Bash(python bench_mvp.py --episodes 100 --num-flights 10 --workers 6 --tag \"v5-0.25-floor\" --resolver improved)"
     ]
   }
 }

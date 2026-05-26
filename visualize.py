@@ -156,22 +156,19 @@ def _load_policy(policy, model_path):
     return SAC.load(model_path)
 
 
-def _sac_actions(model, env, raw_obs_list):
-    """Build (n_active, 2) action array from SAC model predictions."""
-    active_indices = [i for i in range(len(env.flights)) if i not in env.done]
-    actions = np.zeros((len(active_indices), 2), dtype=np.float32)
-    for slot, _ in enumerate(active_indices):
-        obs = normalize_obs(raw_obs_list[slot])
-        action, _ = model.predict(obs, deterministic=True)
-        actions[slot] = action
-    return actions
+def _sac_actions(model, raw_obs_list):
+    """Build (n_active, 2) action array from a single batched SAC forward pass."""
+    n_active = len(raw_obs_list)
+    obs_batch = np.stack([normalize_obs(raw_obs_list[i]) for i in range(n_active)])
+    actions, _ = model.predict(obs_batch, deterministic=True)
+    return actions.astype(np.float32)
 
 
 def _compute_actions(policy, model, env, raw_obs_list):
     """Dispatch action computation based on policy type."""
     if policy == "mvp":
         return mvp_actions_for_env(env)
-    return _sac_actions(model, env, raw_obs_list)
+    return _sac_actions(model, raw_obs_list)
 
 
 # ────────────────────────── TRAJECTORY PLOT ──────────────────────────
@@ -310,7 +307,7 @@ def plot_trajectories(model_path, num_flights=5, deploy_all=True,
 
 # ────────────────────────── EVALUATION METRICS ──────────────────────────
 
-def _eval_episodes_worker(model_path, episode_indices, num_flights, deploy_all, random_heading=True, policy="sac"):
+def _eval_episodes_worker(model_path, episode_indices, num_flights, deploy_all, random_heading=True, policy="sac", progress_interval=100):
     """Worker function that runs a batch of episodes (used by ProcessPoolExecutor)."""
     model = _load_policy(policy, model_path)
     env = Environment(num_flights=num_flights, random_init_heading=random_heading)
@@ -354,6 +351,11 @@ def _eval_episodes_worker(model_path, episode_indices, num_flights, deploy_all, 
         local_metrics["episode_length"].append(step)
         local_metrics["total_drift"].append(ep_drift)
         local_metrics["restricted_intrusions"].append(ep_restricted_intrusions)
+
+        completed = len(local_metrics["conflicts"])
+        if completed % progress_interval == 0:
+            print(f"  [{policy.upper()}] episode {ep + 1} done "
+                  f"(worker batch progress: {completed}/{len(episode_indices)})", flush=True)
 
     env.close()
     return local_metrics
@@ -517,7 +519,7 @@ def _eval_sweep_worker(model_path, episode_indices, num_flights, deploy_all,
         "restricted_intrusions": [],
     }
 
-    for ep in episode_indices:
+    for _ in episode_indices:
         raw_obs_list = env.reset(num_flights)
         done = False
         ep_conflicts = 0
@@ -850,54 +852,211 @@ def compare_checkpoints(checkpoint_dir="results/checkpoints/",
 
 # ────────────────────────── POLICY COMPARISON (SAC vs MVP) ──────────────────────────
 
+def _bootstrap_ci_pct(bool_array, confidence=0.95, n_boot=2000, rng=None):
+    """Bootstrap CI for a percentage (fraction of True values × 100)."""
+    if rng is None:
+        rng = np.random.default_rng(0)
+    arr = np.asarray(bool_array, dtype=float)
+    n = len(arr)
+    boot = rng.choice(arr, size=(n_boot, n), replace=True)
+    boot_means = boot.mean(axis=1) * 100
+    alpha = 1.0 - confidence
+    lo = np.percentile(boot_means, 100 * alpha / 2)
+    hi = np.percentile(boot_means, 100 * (1 - alpha / 2))
+    center = arr.mean() * 100
+    return center, center - lo, hi - center  # (value, err_lo, err_hi)
+
+
+def _normal_ci(values, confidence=0.95):
+    """Normal-approximation CI for a mean."""
+    import math
+    arr = np.asarray(values, dtype=float)
+    n = len(arr)
+    mean = arr.mean()
+    std = arr.std(ddof=1)
+    # Use z (n is typically large); for small n this is conservative
+    from scipy.stats import norm
+    z = norm.ppf(1 - (1 - confidence) / 2)
+    margin = z * std / math.sqrt(n)
+    return mean, margin, margin  # (value, err_lo, err_hi)
+
+
+def _bar_with_ci(ax, positions, values, err_lo, err_hi, colors, labels,
+                 bar_width=0.35, edge_colors=None):
+    """Draw bars with asymmetric CI whiskers and per-bar edge colors."""
+    if edge_colors is None:
+        edge_colors = ["black"] * len(colors)
+    bars = []
+    for pos, val, elo, ehi, color, edge, label in zip(
+            positions, values, err_lo, err_hi, colors, edge_colors, labels):
+        b = ax.bar(pos, val, width=bar_width, color=color, linewidth=0.8,
+                   edgecolor=edge, label=label, zorder=3)
+        ax.errorbar(pos, val, yerr=[[elo], [ehi]], fmt="none",
+                    color="black", capsize=4, capthick=1.0, linewidth=1.0, zorder=4)
+        bars.append(b)
+    return bars
+
+
+def _style_ax(ax, title, ylabel, ylim=None):
+    ax.set_title(title, fontsize=12, fontweight="bold", pad=8)
+    ax.set_ylabel(ylabel, fontsize=11)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    ax.spines["bottom"].set_visible(False)
+    ax.tick_params(axis="x", bottom=False)
+    ax.yaxis.grid(True, linestyle="--", color="#cccccc", alpha=0.6, zorder=0)
+    ax.set_axisbelow(True)
+    if ylim is not None:
+        ax.set_ylim(*ylim)
+
+
 def compare_policies(model_path, n_episodes=100, num_flights=5, workers=1,
-                     random_heading=True, save_path="results/plots/policy_comparison.png"):
-    """Run both SAC and MVP on the same number of episodes and plot side-by-side bars."""
+                     random_heading=True, save_dir="results/plots",
+                     confidence=0.95):
+    """Run SAC and MVP, then produce 4 comparison figures with CI error bars."""
     print(f"[compare_policies] SAC: {n_episodes} eps × {workers} workers")
-    sac_metrics = run_evaluation(model_path, n_episodes, num_flights, deploy_all=True,
-                                 workers=workers, random_heading=random_heading, policy="sac")
+    sac_m = run_evaluation(model_path, n_episodes, num_flights, deploy_all=True,
+                           workers=workers, random_heading=random_heading, policy="sac")
     print(f"[compare_policies] MVP: {n_episodes} eps × {workers} workers")
-    mvp_metrics = run_evaluation(model_path, n_episodes, num_flights, deploy_all=True,
-                                 workers=workers, random_heading=random_heading, policy="mvp")
+    mvp_m = run_evaluation(model_path, n_episodes, num_flights, deploy_all=True,
+                           workers=workers, random_heading=random_heading, policy="mvp")
 
-    sac_s = _summarize(sac_metrics, n_episodes)
-    mvp_s = _summarize(mvp_metrics, n_episodes)
+    os.makedirs(save_dir, exist_ok=True)
+    rng = np.random.default_rng(42)
 
-    metric_keys = [
-        ("conflict_free_pct",  "Conflict-Free Episodes (%)",     "#2196F3", (0, 105)),
-        ("intrusion_free_pct", "Intrusion-Free Episodes (%)",    "#9C27B0", (0, 105)),
-        ("mean_targets",       "Mean Targets Reached / Episode", "#4CAF50", None),
-        ("mean_drift",         "Mean Cumulative Drift / Episode","#FF9800", None),
-        ("mean_conflicts",     "Mean Conflicts / Episode",       "#F44336", None),
-        ("mean_intrusions",    "Mean Intrusions / Episode",      "#795548", None),
-    ]
-
-    fig, axes = plt.subplots(2, 3, figsize=(18, 10))
+    COLOR_SAC = "#aec6e8"
+    COLOR_MVP = "#ffbc78"
+    EDGE_SAC  = "#83adca"
+    EDGE_MVP  = "#ed892f"
     labels = ["SAC", "MVP"]
-    xs = np.arange(2)
+    colors = [COLOR_SAC, COLOR_MVP]
+    edge_colors = [EDGE_SAC, EDGE_MVP]
+    bar_w = 0.35
+    xs = np.array([0.0, bar_w + 0.1])   # tight pair, small gap between bars
+    tick_locs = xs
+    ci_label = f"{int(confidence * 100)}% CI"
+    subtitle = f"{n_episodes} episodes · {num_flights} flights · {ci_label}"
 
-    for ax, (key, title, color, ylim) in zip(axes.flat, metric_keys):
-        vals = [sac_s[key], mvp_s[key]]
-        bars = ax.bar(xs, vals, color=[color, "#777777"], alpha=0.85)
-        ax.set_xticks(xs)
-        ax.set_xticklabels(labels)
-        ax.set_title(title)
-        if ylim is not None:
-            ax.set_ylim(*ylim)
-        ax.grid(True, alpha=0.3, axis="y")
-        for bar, v in zip(bars, vals):
-            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height(),
-                    f"{v:.2f}", ha="center", va="bottom", fontsize=10)
+    def _legend(ax, loc="lower right"):
+        handles = [plt.Rectangle((0, 0), 1, 1, color=c, linewidth=0) for c in colors]
+        ax.legend(handles, labels, fontsize=10, loc=loc,
+                  frameon=True, framealpha=0.9, edgecolor="#cccccc")
 
-    fig.suptitle(f"Policy Comparison: SAC vs MVP ({n_episodes} episodes, {num_flights} flights)",
-                 fontsize=14, fontweight="bold")
+    # ── Figure 1: conflict-free % and intrusion-free % ──
+    fig1, axes1 = plt.subplots(1, 2, figsize=(10, 6))
+    fig1.suptitle(f"Safety Rates — SAC vs MVP\n{subtitle}", fontsize=12, fontweight="bold")
+
+    for ax, (key, title, ylabel) in zip(axes1, [
+        ("conflicts",             "Conflict-Free Episodes",  "Episodes with Conflicts (%)"),
+        ("restricted_intrusions", "Intrusion-Free Episodes", "Episodes with Intrusions (%)"),
+    ]):
+        sac_bool = [c == 0 for c in sac_m[key]]
+        mvp_bool = [c == 0 for c in mvp_m[key]]
+        sv, s_lo, s_hi = _bootstrap_ci_pct(sac_bool, confidence, rng=rng)
+        mv, m_lo, m_hi = _bootstrap_ci_pct(mvp_bool, confidence, rng=rng)
+
+        _bar_with_ci(ax, xs, [sv, mv], [s_lo, m_lo], [s_hi, m_hi],
+                     colors, labels, bar_width=bar_w, edge_colors=edge_colors)
+        ax.set_xticks(tick_locs)
+        ax.set_xticklabels(labels, fontsize=12)
+        ax.set_xlim(xs[0] - bar_w * 0.8, xs[-1] + bar_w * 0.8)
+        _style_ax(ax, title, ylabel, ylim=(0, 105))
+        _legend(ax, loc="lower right")
+
     plt.tight_layout()
-    os.makedirs(os.path.dirname(save_path), exist_ok=True)
-    plt.savefig(save_path, dpi=150, bbox_inches="tight")
-    print(f"Saved policy comparison plot to {save_path}")
+    p1 = os.path.join(save_dir, "policy_comparison_safety.png")
+    fig1.savefig(p1, dpi=150, bbox_inches="tight")
+    print(f"Saved → {p1}")
+
+    # ── Figure 2: mean conflicts and mean intrusions (shared axis) ──
+    fig2, ax2 = plt.subplots(1, 1, figsize=(8, 6))
+    fig2.suptitle(f"Mean Error Counts — SAC vs MVP\n{subtitle}", fontsize=12, fontweight="bold")
+
+    group_gap = 0.6
+    pair_xs = np.array([0.0, bar_w + 0.08,
+                        bar_w + 0.08 + group_gap,
+                        2 * (bar_w + 0.08) + group_gap])
+    pair_colors = [COLOR_SAC, COLOR_MVP, COLOR_SAC, COLOR_MVP]
+    pair_edges  = [EDGE_SAC,  EDGE_MVP,  EDGE_SAC,  EDGE_MVP]
+    pair_labels  = ["SAC", "MVP", "SAC", "MVP"]
+
+    vals2, elos2, ehis2 = [], [], []
+    for arr in [sac_m["conflicts"], mvp_m["conflicts"],
+                sac_m["restricted_intrusions"], mvp_m["restricted_intrusions"]]:
+        v, elo, ehi = _normal_ci(arr, confidence)
+        vals2.append(v); elos2.append(elo); ehis2.append(ehi)
+
+    _bar_with_ci(ax2, pair_xs, vals2, elos2, ehis2,
+                 pair_colors, pair_labels, bar_width=bar_w, edge_colors=pair_edges)
+
+    mid_conf = (pair_xs[0] + pair_xs[1]) / 2
+    mid_intr = (pair_xs[2] + pair_xs[3]) / 2
+    ax2.set_xticks([mid_conf, mid_intr])
+    ax2.set_xticklabels(["Mean Conflicts / Episode", "Mean Intrusions / Episode"], fontsize=11)
+    ax2.set_xlim(pair_xs[0] - bar_w * 0.8, pair_xs[-1] + bar_w * 0.8)
+    _style_ax(ax2, "Mean Error Counts", "Mean Count / Episode")
+    _legend(ax2, loc="upper right")
+
+    plt.tight_layout()
+    p2 = os.path.join(save_dir, "policy_comparison_errors.png")
+    fig2.savefig(p2, dpi=150, bbox_inches="tight")
+    print(f"Saved → {p2}")
+
+    # ── Figure 3: mean targets reached ──
+    fig3, ax3 = plt.subplots(1, 1, figsize=(6, 6))
+    fig3.suptitle(f"Mean Targets Reached — SAC vs MVP\n{subtitle}", fontsize=12, fontweight="bold")
+
+    sv3, s_lo3, s_hi3 = _normal_ci(sac_m["targets_reached"], confidence)
+    mv3, m_lo3, m_hi3 = _normal_ci(mvp_m["targets_reached"], confidence)
+    _bar_with_ci(ax3, xs, [sv3, mv3], [s_lo3, m_lo3], [s_hi3, m_hi3],
+                 colors, labels, bar_width=bar_w, edge_colors=edge_colors)
+    ax3.axhline(num_flights, color="#555555", linestyle="--", linewidth=1.2,
+                alpha=0.6, zorder=2)
+    ax3.set_xticks(tick_locs)
+    ax3.set_xticklabels(labels, fontsize=12)
+    ax3.set_xlim(xs[0] - bar_w * 0.8, xs[-1] + bar_w * 0.8)
+    _style_ax(ax3, "Mean Targets Reached", "Mean Targets / Episode",
+              ylim=(0, num_flights * 1.15))
+
+    leg_handles = [plt.Rectangle((0, 0), 1, 1, color=c, linewidth=0) for c in colors]
+    leg_handles.append(plt.Line2D([0], [0], color="#555555", linestyle="--", linewidth=1.2))
+    ax3.legend(leg_handles, labels + [f"Max ({num_flights})"],
+               fontsize=10, loc="lower right", frameon=True, framealpha=0.9, edgecolor="#cccccc")
+
+    plt.tight_layout()
+    p3 = os.path.join(save_dir, "policy_comparison_targets.png")
+    fig3.savefig(p3, dpi=150, bbox_inches="tight")
+    print(f"Saved → {p3}")
+
+    # ── Figure 4: mean cumulative drift ──
+    fig4, ax4 = plt.subplots(1, 1, figsize=(6, 6))
+    fig4.suptitle(f"Mean Cumulative Drift — SAC vs MVP\n{subtitle}", fontsize=12, fontweight="bold")
+
+    sv4, s_lo4, s_hi4 = _normal_ci(sac_m["total_drift"], confidence)
+    mv4, m_lo4, m_hi4 = _normal_ci(mvp_m["total_drift"], confidence)
+    _bar_with_ci(ax4, xs, [sv4, mv4], [s_lo4, m_lo4], [s_hi4, m_hi4],
+                 colors, labels, bar_width=bar_w, edge_colors=edge_colors)
+    ax4.set_xticks(tick_locs)
+    ax4.set_xticklabels(labels, fontsize=12)
+    ax4.set_xlim(xs[0] - bar_w * 0.8, xs[-1] + bar_w * 0.8)
+    _style_ax(ax4, "Mean Cumulative Drift", "Cumulative Drift (rad) / Episode")
+    _legend(ax4, loc="upper right")
+
+    plt.tight_layout()
+    p4 = os.path.join(save_dir, "policy_comparison_drift.png")
+    fig4.savefig(p4, dpi=150, bbox_inches="tight")
+    print(f"Saved → {p4}")
+
     print("\n=== Summary ===")
-    for key, title, _, _ in metric_keys:
-        print(f"  {title:40s}  SAC={sac_s[key]:8.3f}   MVP={mvp_s[key]:8.3f}")
+    for label, m in [("SAC", sac_m), ("MVP", mvp_m)]:
+        cf  = 100 * sum(1 for c in m["conflicts"] if c == 0) / n_episodes
+        inf = 100 * sum(1 for r in m["restricted_intrusions"] if r == 0) / n_episodes
+        print(f"  {label}: conflict-free={cf:.1f}%  intrusion-free={inf:.1f}%  "
+              f"targets={np.mean(m['targets_reached']):.2f}  "
+              f"drift={np.mean(m['total_drift']):.2f}  "
+              f"conflicts={np.mean(m['conflicts']):.2f}  "
+              f"intrusions={np.mean(m['restricted_intrusions']):.2f}")
+
     plt.show()
 
 
@@ -932,6 +1091,8 @@ if __name__ == "__main__":
                         choices=["improved", "original"],
                         help="MVP resolver variant: 'improved' (v4, with path-bias + bug fixes) "
                              "or 'original' (v0, baseline). Only used when --policy mvp.")
+    parser.add_argument("--confidence", type=float, default=0.95,
+                        help="Confidence level for CI error bars in compare_policies (e.g. 0.95 = 95%% CI).")
     args = parser.parse_args()
 
     import visualize as _self
@@ -969,10 +1130,10 @@ if __name__ == "__main__":
                             workers=args.workers)
 
     elif args.command == "compare_policies":
-        save_path = os.path.join(args.run_dir, "plots", "policy_comparison_sac_vs_mvp.png")
         compare_policies(model_path, n_episodes=args.episodes, num_flights=args.num_flights,
                          workers=args.workers, random_heading=random_heading_val,
-                         save_path=save_path)
+                         save_dir=os.path.join(args.run_dir, "plots"),
+                         confidence=args.confidence)
 
     elif args.command in ("restricted_airspace_size", "uncertainties", "aircraft_num"):
         run_name = os.path.basename(os.path.normpath(args.run_dir))
