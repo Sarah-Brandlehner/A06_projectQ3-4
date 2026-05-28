@@ -45,7 +45,6 @@ import math
 import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.patches as mpatches
-from matplotlib.collections import LineCollection
 from concurrent.futures import ProcessPoolExecutor
 from stable_baselines3 import SAC
 

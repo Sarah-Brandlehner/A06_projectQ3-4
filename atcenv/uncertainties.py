@@ -4,7 +4,7 @@ from atcenv.definitions import Flight, Airspace
 from shapely.geometry import Point, Polygon
 
 
-def position_scramble(ac_point, probability, min_dist, max_dist, alt = 0):
+def position_scramble(ac_point, probability, min_dist, max_dist):
     '''
     Input: a point, a probability that the point. Output: a scrambled position. Must be within airspace.'''
     if min_dist > max_dist:

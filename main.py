@@ -12,7 +12,6 @@ if __name__ == "__main__":
     random.seed(52)
     from jsonargparse import ArgumentParser, ActionConfigFile
     from atcenv import Environment
-    import time
     from tqdm import tqdm
 
     # RL model
@@ -35,16 +34,12 @@ if __name__ == "__main__":
     # init environment
     env = Environment(**vars(args.env))
 
-    load_models = False
-    test = False
 
- 
     # increase number of flights
     tot_rew_list = []
     conf_list = []
     speeddif_list = []
     # run episodes
-    state_list = []
     for e in tqdm(range(args.episodes)):   
         print('\n-----------------------------------------------------')
         #snapshot1 = tracemalloc.take_snapshot()     
