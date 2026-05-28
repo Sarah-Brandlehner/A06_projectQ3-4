@@ -93,7 +93,7 @@ def plot_training_curves(eval_log_path="results/eval_logs/evaluations.npz",
     mean_length = ep_lengths.mean(axis=1)
     std_length = ep_lengths.std(axis=1)
 
-    # Set publication-quality style
+    
     plt.rcParams['font.serif'] = ['Times New Roman', 'DejaVu Serif']
     plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans']
     plt.rcParams['font.size'] = 10
@@ -109,7 +109,7 @@ def plot_training_curves(eval_log_path="results/eval_logs/evaluations.npz",
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
     fig.patch.set_facecolor('white')
 
-    # Helper function to style axes
+    
     def style_axis(ax):
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
@@ -225,7 +225,7 @@ def plot_trajectories(model_path, num_flights=5,
         model, num_flights, random_heading=random_heading
     )
 
-    # Set publication-quality style
+    
     plt.rcParams['font.serif'] = ['Times New Roman', 'DejaVu Serif']
     plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans']
     plt.rcParams['font.size'] = 10
@@ -237,7 +237,7 @@ def plot_trajectories(model_path, num_flights=5,
     fig, ax = plt.subplots(1, 1, figsize=(10, 10))
     fig.patch.set_facecolor('white')
 
-    # Professional color palette for aircraft
+    
     aircraft_colors = ['#1976D2', '#388E3C', '#D32F2F', '#F57C00', '#6A1B9A',
                       '#00796B', '#0097A7', '#7B1FA2', '#C2185B', '#E64A19']
 
@@ -413,7 +413,7 @@ def run_evaluation(model_path, n_episodes=30, num_flights=5, workers=1, random_h
 
 
 def plot_publication_individual(metrics, n_episodes, num_flights, out_dir):
-    """Plot each evaluation metric as a separate, publication-ready graph."""
+    """Plot each evaluation metric as a separate graph"""
     os.makedirs(out_dir, exist_ok=True)
     
     plt.rcParams['font.serif'] = ['Times New Roman', 'DejaVu Serif']
@@ -522,7 +522,7 @@ def plot_publication_individual(metrics, n_episodes, num_flights, out_dir):
 
 
 def plot_publication_individual_distribution(metrics, n_episodes, num_flights, out_dir):
-    """Plot each evaluation metric as a separate, publication-ready distribution graph."""
+    """Plot each evaluation metric as a separate graph."""
     os.makedirs(out_dir, exist_ok=True)
     
     plt.rcParams['font.serif'] = ['Times New Roman', 'DejaVu Serif']
@@ -556,10 +556,10 @@ def plot_publication_individual_distribution(metrics, n_episodes, num_flights, o
     fig.patch.set_facecolor('white')
     c_data = metrics["conflicts"]
     c_max = int(max(c_data)) if c_data else 0
-    # NEW: Center bins on integers
+    # Center bins on integers
     bins = np.arange(-0.5, c_max + 1.5, 1.0) 
     ax.hist(c_data, bins=bins, color=colors['conflicts'], alpha=0.8, edgecolor='black', linewidth=1.0)
-    # NEW: Force x-ticks to be whole numbers
+    # Force x-ticks to be whole numbers
     ax.set_xticks(range(c_max + 1))
     mean_conflicts = np.mean(c_data)
     ax.axvline(mean_conflicts, color=colors['mean_line'], linestyle='-', linewidth=2.0)
@@ -573,7 +573,7 @@ def plot_publication_individual_distribution(metrics, n_episodes, num_flights, o
     # 2. Targets distribution
     fig, ax = plt.subplots(figsize=(8, 6))
     t_data = metrics["targets_reached"]
-    # NEW: Use num_flights as the logical max
+    # Use num_flights as the logical max
     bins = np.arange(-0.5, num_flights + 1.5, 1.0)
     ax.hist(t_data, bins=bins, color=colors['targets'], alpha=0.8, edgecolor='black', linewidth=1.0)
     ax.set_xticks(range(num_flights + 1))
@@ -648,7 +648,7 @@ def plot_evaluation(model_path, n_episodes=30, num_flights=5,
         plot_publication_individual(metrics, n_episodes, num_flights, individual_dir)
 
 
-    # Set publication-quality style
+    
     plt.rcParams['font.serif'] = ['Times New Roman', 'DejaVu Serif']
     plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans']
     plt.rcParams['font.size'] = 10
@@ -665,7 +665,7 @@ def plot_evaluation(model_path, n_episodes=30, num_flights=5,
     fig, axes = plt.subplots(2, 3, figsize=(15, 9))
     fig.patch.set_facecolor('white')
 
-    # Color palette for academic publication
+    
     colors = {
         'conflicts': '#D32F2F',
         'targets': '#388E3C',
@@ -675,7 +675,7 @@ def plot_evaluation(model_path, n_episodes=30, num_flights=5,
         'mean_line': '#424242'
     }
 
-    # Helper function to style axes
+    
     def style_axis(ax, show_grid=True):
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
@@ -816,7 +816,7 @@ def plot_evaluation_distribution(model_path, n_episodes=30, num_flights=5,
         individual_dir = os.path.join(os.path.dirname(save_path), "evaluation_distribution_individual")
         plot_publication_individual_distribution(metrics, n_episodes, num_flights, individual_dir)
 
-    # Set publication-quality style
+    
     plt.rcParams['font.serif'] = ['Times New Roman', 'DejaVu Serif']
     plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans']
     plt.rcParams['font.size'] = 10
@@ -833,7 +833,7 @@ def plot_evaluation_distribution(model_path, n_episodes=30, num_flights=5,
     fig, axes = plt.subplots(2, 3, figsize=(15, 9))
     fig.patch.set_facecolor('white')
 
-    # Color palette for academic publication
+    
     colors = {
         'conflicts': '#D32F2F',
         'targets': '#388E3C',
@@ -1004,7 +1004,7 @@ def plot_compare_checkpoints(csv_path, save_path, num_flights):
     conflicts_ci = np.array(conflicts_ci)
     targets_ci = np.array(targets_ci)
 
-    # Set publication-quality style
+    
     plt.rcParams['font.serif'] = ['Times New Roman', 'DejaVu Serif']
     plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans']
     plt.rcParams['font.size'] = 10
@@ -1020,7 +1020,7 @@ def plot_compare_checkpoints(csv_path, save_path, num_flights):
     fig, axes = plt.subplots(1, 3, figsize=(16, 5))
     fig.patch.set_facecolor('white')
 
-    # Helper function to style axes
+    
     def style_axis(ax):
         ax.spines['top'].set_visible(False)
         ax.spines['right'].set_visible(False)
@@ -1133,7 +1133,7 @@ def compare_checkpoints(checkpoint_dir="results/checkpoints/",
         plot_compare_checkpoints(csv_path, save_path, num_flights)
         os.remove(csv_path)
 
-    # Set publication-quality style
+    
     plt.rcParams['font.serif'] = ['Times New Roman', 'DejaVu Serif']
     plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans']
     plt.rcParams['font.size'] = 10
@@ -1147,8 +1147,6 @@ def compare_checkpoints(checkpoint_dir="results/checkpoints/",
     plt.rcParams['grid.linewidth'] = 0.5
 
 
-    # --- NEW: CALCULATE METRICS FOR PLOTTING ---
-    # This section was missing, which caused your NameError crashes.
     steps = sorted(all_conflicts.keys())
     mean_conflicts = []
     mean_targets = []
