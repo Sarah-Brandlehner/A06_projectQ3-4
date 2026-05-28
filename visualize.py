@@ -28,6 +28,7 @@ Commands:
     python visualize.py evaluate --run-dir results/4_intruders_unlocked_physics --no-random-heading
     python visualize.py evaluate --run-dir results/minimal_reward_ALL_AGENTS --no-random-heading --workers 8
     python visualize.py evaluate --run-dir results/jan_3 --no-random-heading --workers 24 --episodes 1000
+    python visualize.py evaluate-dist --run-dir results/thisone --workers 8 --episodes 1000 --no-random-heading --save-individual --save-csv
     
     python visualize.py compare --run-dir results/jan_3 --no-random-heading
 
@@ -535,6 +536,116 @@ def plot_publication_individual(metrics, n_episodes, num_flights, out_dir):
     
     print(f"Saved individual publication graphs to {out_dir}")
 
+
+def plot_publication_individual_distribution(metrics, n_episodes, num_flights, out_dir):
+    """Plot each evaluation metric as a separate, publication-ready distribution graph."""
+    os.makedirs(out_dir, exist_ok=True)
+    
+    plt.rcParams['font.serif'] = ['Times New Roman', 'DejaVu Serif']
+    plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans']
+    plt.rcParams['font.size'] = 14
+    plt.rcParams['axes.labelsize'] = 14
+    plt.rcParams['axes.titlesize'] = 16
+    plt.rcParams['xtick.labelsize'] = 12
+    plt.rcParams['ytick.labelsize'] = 12
+    plt.rcParams['legend.fontsize'] = 12
+    plt.rcParams['lines.linewidth'] = 2.0
+    plt.rcParams['axes.linewidth'] = 1.0
+    
+    colors = {
+        'conflicts': '#D32F2F',
+        'targets': '#388E3C',
+        'episode': '#1976D2',
+        'drift': '#F57C00',
+        'intrusions': '#6A1B9A',
+        'mean_line': '#424242'
+    }
+
+    def style_single_axis(ax):
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.5, axis='y')
+        ax.set_axisbelow(True)
+
+    # 1. Conflicts distribution
+    fig, ax = plt.subplots(figsize=(8, 6))
+    fig.patch.set_facecolor('white')
+    c_data = metrics["conflicts"]
+    c_max = int(max(c_data)) if c_data else 0
+    # NEW: Center bins on integers
+    bins = np.arange(-0.5, c_max + 1.5, 1.0) 
+    ax.hist(c_data, bins=bins, color=colors['conflicts'], alpha=0.8, edgecolor='black', linewidth=1.0)
+    # NEW: Force x-ticks to be whole numbers
+    ax.set_xticks(range(c_max + 1))
+    mean_conflicts = np.mean(c_data)
+    ax.axvline(mean_conflicts, color=colors['mean_line'], linestyle='-', linewidth=2.0)
+    ax.set_xlabel('Number of Conflicts')
+    ax.set_ylabel('Frequency')
+    style_single_axis(ax)
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, "conflicts_dist.png"), dpi=300, bbox_inches="tight")
+    plt.close()
+
+    # 2. Targets distribution
+    fig, ax = plt.subplots(figsize=(8, 6))
+    t_data = metrics["targets_reached"]
+    # NEW: Use num_flights as the logical max
+    bins = np.arange(-0.5, num_flights + 1.5, 1.0)
+    ax.hist(t_data, bins=bins, color=colors['targets'], alpha=0.8, edgecolor='black', linewidth=1.0)
+    ax.set_xticks(range(num_flights + 1))
+    mean_targets = np.mean(t_data)
+    ax.axvline(mean_targets, color=colors['mean_line'], linestyle='-', linewidth=2.0)
+    #ax.axvline(num_flights, color='#757575', linestyle='--', linewidth=1.5)
+    ax.set_xlabel('Targets Reached')
+    ax.set_ylabel('Frequency')
+    style_single_axis(ax)
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, "targets_dist.png"), dpi=300, bbox_inches="tight")
+    plt.close()
+
+    # 3. Intrusions distribution
+    fig, ax = plt.subplots(figsize=(8, 6))
+    i_data = metrics["restricted_intrusions"]
+    i_max = int(max(i_data)) if i_data else 0
+    bins = np.arange(-0.5, i_max + 1.5, 1.0)
+    ax.hist(i_data, bins=bins, color=colors['intrusions'], alpha=0.8, edgecolor='black', linewidth=1.0)
+    ax.set_xticks(range(i_max + 1))
+    mean_intrusions = np.mean(i_data)
+    ax.axvline(mean_intrusions, color=colors['mean_line'], linestyle='-', linewidth=2.0)
+    ax.set_xlabel('Number of Intrusions')
+    ax.set_ylabel('Frequency')
+    style_single_axis(ax)
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, "intrusions_dist.png"), dpi=300, bbox_inches="tight")
+    plt.close()
+
+    # 4. Episode length distribution
+    fig, ax = plt.subplots(figsize=(8, 6))
+    fig.patch.set_facecolor('white')
+    ax.hist(metrics["episode_length"], bins=15, color=colors['episode'], alpha=0.8, edgecolor='black', linewidth=1.0)
+    ax.axvline(np.mean(metrics['episode_length']), color=colors['mean_line'], linestyle='-', linewidth=2.0)
+    ax.set_xlabel('Episode Length (steps)')
+    ax.set_ylabel('Frequency')
+    style_single_axis(ax)
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, "episode_length_dist.png"), dpi=300, bbox_inches="tight")
+    plt.close()
+
+    # 5. Drift distribution
+    fig, ax = plt.subplots(figsize=(8, 6))
+    fig.patch.set_facecolor('white')
+    ax.hist(metrics["total_drift"], bins=15, color=colors['drift'], alpha=0.8, edgecolor='black', linewidth=1.0)
+    mean_drift = np.mean(metrics['total_drift'])
+    ax.axvline(mean_drift, color=colors['mean_line'], linestyle='-', linewidth=2.0)
+    ax.set_xlabel('Cumulative Drift (radians)')
+    ax.set_ylabel('Frequency')
+    style_single_axis(ax)
+    plt.tight_layout()
+    plt.savefig(os.path.join(out_dir, "drift_dist.png"), dpi=300, bbox_inches="tight")
+    plt.close()
+    
+    print(f"Saved individual distribution graphs to {out_dir}")
+
 def plot_evaluation(model_path, n_episodes=30, num_flights=5,
                     save_path="results/plots/evaluation.png", workers=1, random_heading=False, save_csv=False, save_individual=False):
     """Run evaluation and plot summary metrics (academic styling)."""
@@ -698,6 +809,167 @@ def plot_evaluation(model_path, n_episodes=30, num_flights=5,
     os.makedirs(os.path.dirname(save_path), exist_ok=True)
     plt.savefig(save_path, dpi=300, bbox_inches="tight", facecolor='white', edgecolor='none')
     print(f"Saved academic-quality evaluation plot to {save_path}")
+    plt.show()
+
+
+def plot_evaluation_distribution(model_path, n_episodes=30, num_flights=5,
+                                  save_path="results/plots/evaluation_dist.png", workers=1, random_heading=False, save_csv=False, save_individual=False):
+    """Run evaluation and plot distribution metrics (histograms for conflicts, targets, intrusions, drift)."""
+    print(f"Running {n_episodes} episodes across {workers} worker(s)...")
+    metrics = run_evaluation(model_path, n_episodes, num_flights, deploy_all=True, workers=workers, random_heading=random_heading)
+
+    # Divide conflicts by 2 (counting pairs)
+    metrics["conflicts"] = [int(c / 2.0) for c in metrics["conflicts"]]
+
+    if save_csv:
+        import pandas as pd
+        csv_path = save_path.replace(".png", ".csv")
+        df = pd.DataFrame(metrics)
+        df.to_csv(csv_path, index_label="Episode")
+        print(f"Saved evaluation metrics CSV to {csv_path}")
+
+    if save_individual:
+        individual_dir = os.path.join(os.path.dirname(save_path), "evaluation_distribution_individual")
+        plot_publication_individual_distribution(metrics, n_episodes, num_flights, individual_dir)
+
+    # Set publication-quality style
+    plt.rcParams['font.serif'] = ['Times New Roman', 'DejaVu Serif']
+    plt.rcParams['font.sans-serif'] = ['Arial', 'DejaVu Sans']
+    plt.rcParams['font.size'] = 10
+    plt.rcParams['axes.labelsize'] = 10
+    plt.rcParams['axes.titlesize'] = 11
+    plt.rcParams['xtick.labelsize'] = 9
+    plt.rcParams['ytick.labelsize'] = 9
+    plt.rcParams['legend.fontsize'] = 9
+    plt.rcParams['figure.titlesize'] = 13
+    plt.rcParams['lines.linewidth'] = 1.5
+    plt.rcParams['axes.linewidth'] = 0.8
+    plt.rcParams['grid.linewidth'] = 0.5
+
+    fig, axes = plt.subplots(2, 3, figsize=(15, 9))
+    fig.patch.set_facecolor('white')
+
+    # Color palette for academic publication
+    colors = {
+        'conflicts': '#D32F2F',
+        'targets': '#388E3C',
+        'episode': '#1976D2',
+        'drift': '#F57C00',
+        'intrusions': '#6A1B9A',
+        'mean_line': '#424242'
+    }
+
+    # Helper function to style axes
+    def style_axis(ax, show_grid=True):
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+        ax.spines['left'].set_linewidth(0.8)
+        ax.spines['bottom'].set_linewidth(0.8)
+        if show_grid:
+            ax.grid(True, alpha=0.3, linestyle='--', linewidth=0.5, axis='y')
+        ax.set_axisbelow(True)
+
+    # Conflicts per episode - DISTRIBUTION
+    ax = axes[0, 0]
+    c_data = metrics["conflicts"]
+    c_max = int(max(c_data)) if c_data else 0
+    bins = np.arange(-0.5, c_max + 1.5, 1.0)
+    ax.hist(c_data, bins=bins, color=colors['conflicts'], alpha=0.75, edgecolor='black', linewidth=0.8)
+    ax.set_xticks(range(c_max + 1))
+    mean_conflicts = np.mean(c_data)
+    ax.axvline(mean_conflicts, color=colors['mean_line'], linestyle='-', linewidth=1.2, alpha=0.7)
+    ax.set_xlabel('Number of Conflicts', fontweight='normal')
+    ax.set_ylabel('Frequency', fontweight='normal')
+    ax.set_title('(a) Conflicts Distribution', fontweight='bold', loc='left')
+    style_axis(ax)
+
+    # Targets reached - DISTRIBUTION
+    ax = axes[0, 1]
+    t_data = metrics["targets_reached"]
+    bins = np.arange(-0.5, num_flights + 1.5, 1.0)
+    ax.hist(t_data, bins=bins, color=colors['targets'], alpha=0.75, edgecolor='black', linewidth=0.8)
+    ax.set_xticks(range(num_flights + 1))
+    mean_targets = np.mean(t_data)
+    ax.axvline(mean_targets, color=colors['mean_line'], linestyle='-', linewidth=1.2, alpha=0.7)
+    #ax.axvline(num_flights, color='#757575', linestyle='--', linewidth=1.0, alpha=0.6)
+    ax.set_xlabel('Targets Reached', fontweight='normal')
+    ax.set_ylabel('Frequency', fontweight='normal')
+    ax.set_title('(b) Targets Reached Distribution', fontweight='bold', loc='left')
+    style_axis(ax)
+
+    # Restricted airspace intrusions - DISTRIBUTION
+    ax = axes[0, 2]
+    i_data = metrics["restricted_intrusions"]
+    i_max = int(max(i_data)) if i_data else 0
+    bins = np.arange(-0.5, i_max + 1.5, 1.0)
+    ax.hist(i_data, bins=bins, color=colors['intrusions'], alpha=0.75, edgecolor='black', linewidth=0.8)
+    ax.set_xticks(range(i_max + 1))
+    mean_intrusions = np.mean(i_data)
+    ax.axvline(mean_intrusions, color=colors['mean_line'], linestyle='-', linewidth=1.2, alpha=0.7)
+    ax.set_xlabel('Number of Intrusions', fontweight='normal')
+    ax.set_ylabel('Frequency', fontweight='normal')
+    ax.set_title('(c) Restricted Airspace Intrusions Distribution', fontweight='bold', loc='left')
+    style_axis(ax)
+
+    # Episode length distribution - SAME
+    ax = axes[1, 0]
+    n, bins, patches = ax.hist(metrics["episode_length"], bins=15, color=colors['episode'],
+                                alpha=0.75, edgecolor='black', linewidth=0.8)
+    ax.axvline(np.mean(metrics['episode_length']), color=colors['mean_line'],
+               linestyle='-', linewidth=1.2, alpha=0.7)
+    ax.set_xlabel('Episode Length (steps)', fontweight='normal')
+    ax.set_ylabel('Frequency', fontweight='normal')
+    ax.set_title('(d) Episode Length Distribution', fontweight='bold', loc='left')
+    style_axis(ax)
+
+    # Cumulative drift per episode - DISTRIBUTION
+    ax = axes[1, 1]
+    n_bins = max(3, int(np.sqrt(len(metrics["total_drift"]))))
+    n, bins, patches = ax.hist(metrics["total_drift"], bins=n_bins, color=colors['drift'],
+                                alpha=0.75, edgecolor='black', linewidth=0.8)
+    mean_drift = np.mean(metrics['total_drift'])
+    ax.axvline(mean_drift, color=colors['mean_line'], linestyle='-', linewidth=1.2, alpha=0.7)
+    ax.set_xlabel('Cumulative Drift (radians)', fontweight='normal')
+    ax.set_ylabel('Frequency', fontweight='normal')
+    ax.set_title('(e) Cumulative Drift Distribution', fontweight='bold', loc='left')
+    style_axis(ax)
+
+    # Summary statistics panel
+    ax = axes[1, 2]
+    ax.axis('off')
+
+    conflict_free = sum(1 for c in metrics["conflicts"] if c == 0)
+    intrusion_free = sum(1 for i in metrics["restricted_intrusions"] if i == 0)
+
+    summary_data = [
+        ('Conflicts', f"{mean_conflicts:.3f}", f"{100*conflict_free/n_episodes:.1f}%"),
+        ('Targets Reached', f"{mean_targets:.3f}", f"{100*mean_targets/num_flights:.1f}%"),
+        ('Restricted Intrusions', f"{mean_intrusions:.3f}", f"{100*intrusion_free/n_episodes:.1f}%"),
+        ('Episode Length', f"{np.mean(metrics['episode_length']):.1f}", f"steps"),
+        ('Drift', f"{mean_drift:.3f}", f"rad"),
+    ]
+
+    table_text = "Performance Metrics\n" + "="*45 + "\n"
+    table_text += f"{'Metric':<22} {'Mean':<15} {'Rate':<10}\n"
+    table_text += "-"*45 + "\n"
+    for metric, value, rate in summary_data:
+        table_text += f"{metric:<22} {value:<15} {rate:<10}\n"
+    table_text += "="*45 + f"\n\nEpisodes: {n_episodes}"
+    table_text += f"\nAircraft: {num_flights}"
+
+    ax.text(0.05, 0.95, table_text, transform=ax.transAxes, fontsize=9,
+            verticalalignment='top', fontfamily='monospace', fontweight='normal',
+            bbox=dict(boxstyle='round,pad=0.8', facecolor='#F5F5F5',
+                     edgecolor='#424242', alpha=0.95, linewidth=1.0))
+
+    fig.suptitle('ATC Conflict Resolution: Evaluation Distribution',
+                 fontsize=13, fontweight='bold', y=0.98)
+
+    plt.subplots_adjust(top=0.93, bottom=0.08, left=0.08, right=0.97, hspace=0.35, wspace=0.30)
+
+    os.makedirs(os.path.dirname(save_path), exist_ok=True)
+    plt.savefig(save_path, dpi=300, bbox_inches="tight", facecolor='white', edgecolor='none')
+    print(f"Saved academic-quality evaluation distribution plot to {save_path}")
     plt.show()
 
 
@@ -961,7 +1233,11 @@ def compare_checkpoints(checkpoint_dir="results/checkpoints/",
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ATC Model Visualization Tools")
+<<<<<<< HEAD
     parser.add_argument("command", choices=["training", "trajectory", "evaluate", "compare", "plot-compare"],
+=======
+    parser.add_argument("command", choices=["training", "trajectory", "evaluate", "evaluate-dist", "compare", "plot-compare"],
+>>>>>>> origin/Adam_branch3
                         help="Which visualization to run")
     parser.add_argument("--run-dir", type=str, default="results",
                         help="The results directory to analyze (e.g., results/test_03drift_40conflict)")
@@ -1002,6 +1278,15 @@ if __name__ == "__main__":
                         save_path=os.path.join(args.run_dir, "plots", "evaluation.png"),
                         workers=args.workers, random_heading=random_heading_val,
                         save_csv=args.save_csv, save_individual=args.save_individual)
+<<<<<<< HEAD
+=======
+
+    elif args.command == "evaluate-dist":
+        plot_evaluation_distribution(model_path, args.episodes, args.num_flights,
+                                      save_path=os.path.join(args.run_dir, "plots", "evaluation_dist.png"),
+                                      workers=args.workers, random_heading=random_heading_val,
+                                      save_csv=args.save_csv, save_individual=args.save_individual)
+>>>>>>> origin/Adam_branch3
 
     elif args.command == "compare":
         compare_checkpoints(checkpoint_dir=checkpoint_dir, 
