@@ -1233,11 +1233,7 @@ def compare_checkpoints(checkpoint_dir="results/checkpoints/",
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="ATC Model Visualization Tools")
-<<<<<<< HEAD
-    parser.add_argument("command", choices=["training", "trajectory", "evaluate", "compare", "plot-compare"],
-=======
     parser.add_argument("command", choices=["training", "trajectory", "evaluate", "evaluate-dist", "compare", "plot-compare"],
->>>>>>> origin/Adam_branch3
                         help="Which visualization to run")
     parser.add_argument("--run-dir", type=str, default="results",
                         help="The results directory to analyze (e.g., results/test_03drift_40conflict)")
@@ -1278,15 +1274,12 @@ if __name__ == "__main__":
                         save_path=os.path.join(args.run_dir, "plots", "evaluation.png"),
                         workers=args.workers, random_heading=random_heading_val,
                         save_csv=args.save_csv, save_individual=args.save_individual)
-<<<<<<< HEAD
-=======
 
     elif args.command == "evaluate-dist":
         plot_evaluation_distribution(model_path, args.episodes, args.num_flights,
                                       save_path=os.path.join(args.run_dir, "plots", "evaluation_dist.png"),
                                       workers=args.workers, random_heading=random_heading_val,
                                       save_csv=args.save_csv, save_individual=args.save_individual)
->>>>>>> origin/Adam_branch3
 
     elif args.command == "compare":
         compare_checkpoints(checkpoint_dir=checkpoint_dir, 
