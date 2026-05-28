@@ -12,6 +12,16 @@ Commands:
     compare        Compare multiple checkpoints
     plot-compare   Make graphs from CSV files (e.g. checkpoint_comparison.csv)
 
+Options:
+    --model-name          Which model inside run-dir to evaluate (default: best_model/best_model.zip)
+    --episodes            Number of episodes to run (default: 100)
+    --num-flights         Number of aircraft (default: 10)
+    --workers             Number of parallel worker processes (default: half of CPU cores)
+    --no-random-heading   Evaluate on perfectly straight initial headings instead of randomized ones
+    --save-csv            Save the metrics data to a CSV file
+    --save-individual     Save individual graphs for each metric
+    --csv-path            Path to CSV for plot-compare command
+
 Example:
     python visualize.py evaluate --run-dir results/my_run --workers 8 --episodes 100 --no-random-heading
     python visualize.py plot-compare --csv-path results/my_run/plots/checkpoint_comparison.csv
