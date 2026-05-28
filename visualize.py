@@ -2,41 +2,19 @@
 Visualization and analysis tools for ATC RL model evaluation.
 
 Usage:
-    python visualize.py --model results/best_model/best_model.zip
+    python visualize.py <command> --run-dir results/<run_name> [options]
 
 Commands:
-    python visualize.py training          # Plot training curves from eval logs
-    python visualize.py trajectory        # Plot aircraft trajectories for one episode
-    python visualize.py evaluate          # Run evaluation and plot metrics
-    python visualize.py compare           # Compare multiple checkpoints
- 
-    To run the visualization in a specific run directory, use the --run-dir argument:
+    training       Plot training curves from eval logs
+    trajectory     Plot aircraft trajectories for one episode
+    evaluate       Run evaluation and plot metrics
+    evaluate-dist  Run evaluation and plot metric distributions
+    compare        Compare multiple checkpoints
+    plot-compare   Make graphs from CSV files (e.g. checkpoint_comparison.csv)
 
-    python visualize.py compare --run-dir results/test_03drift_40conflict
-    python visualize.py evaluate --run-dir results/thisone --workers 8 --episodes 2000 --no-random-heading
-    python visualize.py training --run-dir results/thisone --workers 16 --no-random-heading
-    python visualize.py trajectory --run-dir results/thisone --no-random-heading
-    python visualize.py compare --run-dir results/thisone --workers 16 --no-random-heading
-    python visualize.py evaluate --run-dir results/minimal_reward_ALL_AGENTS
-    python visualize.py training --run-dir results/test_03drift_40conflict
-    python visualize.py trajectory --run-dir results/minimal_reward_ALL_AGENTS
-    python visualize.py evaluate --run-dir results/05drift_08conflict_1.5target_02proximity_ALL_AGENTS --episodes 100 --workers 8
-    python visualize.py compare --run-dir results/05drift_06conflict_01target_02proximity_ALL_AGENTS --workers 8
-    python visualize.py training --run-dir results/<run> --workers 8
-    python visualize.py trajectory --run-dir results/basic_policy --workers 8
-
-    python visualize.py evaluate --run-dir results/4_intruders_unlocked_physics --no-random-heading
-    python visualize.py evaluate --run-dir results/minimal_reward_ALL_AGENTS --no-random-heading --workers 8
-    python visualize.py evaluate --run-dir results/jan_3 --no-random-heading --workers 24 --episodes 1000
-    python visualize.py evaluate-dist --run-dir results/thisone --workers 8 --episodes 1000 --no-random-heading --save-individual --save-csv
-    
-    python visualize.py compare --run-dir results/jan_3 --no-random-heading
-
-    making graphs from CSV's:
-    python visualize.py plot-compare --csv-path results/thisoneLite/thisoneLite/plots/checkpoint_comparison.csv
-
-
-
+Example:
+    python visualize.py evaluate --run-dir results/my_run --workers 8 --episodes 100 --no-random-heading
+    python visualize.py plot-compare --csv-path results/my_run/plots/checkpoint_comparison.csv
 """
 import argparse
 import os

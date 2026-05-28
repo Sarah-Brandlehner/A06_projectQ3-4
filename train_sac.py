@@ -4,14 +4,13 @@ SAC training script for the atcenv air traffic conflict resolution environment.
 Algorithm choice based on Paper 6 (Badea et al.): SAC with continuous
 heading + speed actions, 2 closest intruders in observation.
 
-# USE THE NUMBER OF CORES YOUR CPU HAS
 Usage:
-    
-    python train_sac.py --timesteps 4000000 --num-flights 10 --num-envs 16 --run-name "finalhopefully"
+    # Start a new training run (Set --num-envs to your CPU core count)
+    python train_sac.py --timesteps 4000000 --num-flights 10 --num-envs 16 --run-name "my_run"
 
-    python train_sac.py --timesteps 4000000 --num-flights 10 --num-envs 16 --run-name "finalhopefully" --load "results/finalhopefully/best_model/best_model.zip"
+    # Resume training from a checkpoint
+    python train_sac.py --timesteps 4000000 --num-flights 10 --num-envs 16 --run-name "my_run" --load "results/my_run/best_model/best_model.zip"
 """
-#jan_1 finished at 3M steps
 import argparse
 import os
 import numpy as np
