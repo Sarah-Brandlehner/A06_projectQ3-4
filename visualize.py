@@ -17,13 +17,13 @@ Options:
     --episodes            Number of episodes to run (default: 100)
     --num-flights         Number of aircraft (default: 10)
     --workers             Number of parallel worker processes (default: half of CPU cores)
-    --no-random-heading   Evaluate on perfectly straight initial headings instead of randomized ones
+    --random-heading      Evaluate on randomized initial headings instead of perfectly straight ones
     --save-csv            Save the metrics data to a CSV file
     --save-individual     Save individual graphs for each metric
     --csv-path            Path to CSV for plot-compare command
 
 Example:
-    python visualize.py evaluate --run-dir results/my_run --workers 8 --episodes 100 --no-random-heading
+    python visualize.py evaluate --run-dir results/my_run --workers 8 --episodes 100
     python visualize.py plot-compare --csv-path results/my_run/plots/checkpoint_comparison.csv
 """
 import argparse
@@ -1227,8 +1227,8 @@ if __name__ == "__main__":
     parser.add_argument("--num-flights", type=int, default=10)
     parser.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) // 2),
                         help="Number of parallel worker processes for evaluation")
-    parser.add_argument("--no-random-heading", action="store_true", 
-                        help="Evaluate on perfectly straight initial headings instead of randomized ones.")
+    parser.add_argument("--random-heading", action="store_true", 
+                        help="Evaluate on randomized initial headings instead of perfectly straight ones.")
     parser.add_argument("--save-csv", action="store_true",
                         help="Save the metrics data to a CSV file.")
     parser.add_argument("--save-individual", action="store_true",
@@ -1237,7 +1237,7 @@ if __name__ == "__main__":
                         help="Path to CSV for plot-compare command")
     args = parser.parse_args()
     
-    random_heading_val = not args.no_random_heading
+    random_heading_val = args.random_heading
 
     # Construct the full paths based on the run-dir
     model_path = os.path.join(args.run_dir, args.model_name)

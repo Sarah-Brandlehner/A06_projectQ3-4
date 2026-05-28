@@ -2,10 +2,11 @@
 Evaluation script for the ATC conflict resolution model.
 
 Applies the trained policy to ALL agents (parameter sharing).
+Note: Random initial heading is deactivated by default for evaluations.
 
 Usage:
     python evaluate.py --model results/best_model/best_model.zip --episodes 10 --num-flights 5
-    python evaluate.py --model results/1.5drift_finetune1/best_model/best_model.zip --episodes 50 --num-flights 10
+    python evaluate.py --model results/best_model.zip --episodes 50 --num-flights 10 --random-heading
 """
 import argparse
 import os
@@ -61,13 +62,13 @@ def normalize_obs(raw_obs):
 
 
 
-def evaluate_all_agents(model_path: str, n_episodes: int = 10, num_flights: int = 5):
+def evaluate_all_agents(model_path: str, n_episodes: int = 10, num_flights: int = 5, random_heading: bool = False):
     """
     Deploy the trained policy to ALL agents (parameter sharing).
     Each agent gets its own observation, the same model predicts its action.
     """
     model = SAC.load(model_path)
-    env = Environment(num_flights=num_flights)
+    env = Environment(num_flights=num_flights, random_init_heading=random_heading)
 
     metrics = {
         "conflicts": [],
@@ -137,7 +138,8 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, required=True, help="Path to trained model .zip")
     parser.add_argument("--episodes", type=int, default=10)
     parser.add_argument("--num-flights", type=int, default=5)
+    parser.add_argument("--random-heading", action="store_true", help="Enable random initial headings (default is deactivated)")
     args = parser.parse_args()
 
     print(f"Evaluating with ALL {args.num_flights} agents controlled by model...")
-    evaluate_all_agents(args.model, args.episodes, num_flights=args.num_flights)
+    evaluate_all_agents(args.model, args.episodes, num_flights=args.num_flights, random_heading=args.random_heading)
