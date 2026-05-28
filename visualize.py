@@ -49,7 +49,7 @@ from concurrent.futures import ProcessPoolExecutor
 from stable_baselines3 import SAC
 
 from atcenv.env import Environment, NUMBER_INTRUDERS_STATE
-from atcenv.sb3_wrapper import ATCEnvWrapper, ACTION_FREQUENCY
+from atcenv.multi_agent_wrapper import ACTION_FREQUENCY
 
 # Normalization (must match sb3_wrapper.py)
 INTRUDER_DIST_NORM = 50000.0
@@ -163,7 +163,7 @@ def plot_training_curves(eval_log_path="results/eval_logs/evaluations.npz",
 
 # ────────────────────────── TRAJECTORY PLOT ──────────────────────────
 
-def record_episode(model, num_flights=5, deploy_all=True, random_heading=True):
+def record_episode(model, num_flights=5, random_heading=True):
     """Run one episode and record all aircraft trajectories."""
     env = Environment(num_flights=num_flights, random_init_heading=random_heading)
     raw_obs_list = env.reset(num_flights)
@@ -182,14 +182,13 @@ def record_episode(model, num_flights=5, deploy_all=True, random_heading=True):
     while not done:
         # Get actions
         current_actions = {}
-        if deploy_all:
-            agent_idx = 0
-            for i in range(num_flights):
-                if i not in env.done:
-                    obs = normalize_obs(raw_obs_list[agent_idx])
-                    action, _ = model.predict(obs, deterministic=True)
-                    current_actions[i] = action
-                    agent_idx += 1
+        agent_idx = 0
+        for i in range(num_flights):
+            if i not in env.done:
+                obs = normalize_obs(raw_obs_list[agent_idx])
+                action, _ = model.predict(obs, deterministic=True)
+                current_actions[i] = action
+                agent_idx += 1
 
         # Record positions before stepping
         for i, f in enumerate(env.flights):
@@ -230,12 +229,12 @@ def record_episode(model, num_flights=5, deploy_all=True, random_heading=True):
     return trajectories, targets, airspace_coords, restricted_airspace_coords, total_conflicts, total_restricted_intrusions
 
 
-def plot_trajectories(model_path, num_flights=5, deploy_all=True,
+def plot_trajectories(model_path, num_flights=5,
                       save_path="results/plots/trajectories.png", random_heading=False):
     """Plot aircraft trajectories for one episode (academic styling)."""
     model = SAC.load(model_path)
     trajectories, targets, airspace, restricted_airspace, total_conflicts, total_restricted_intrusions = record_episode(
-        model, num_flights, deploy_all
+        model, num_flights, random_heading=random_heading
     )
 
     # Set publication-quality style
@@ -309,8 +308,7 @@ def plot_trajectories(model_path, num_flights=5, deploy_all=True,
     ax.legend(handles=[start_patch, target_patch, normal_patch, conflict_patch, restricted_patch], 
               loc="upper left", framealpha=0.95, edgecolor='#424242', fancybox=False)
 
-    mode = "Multi-agent" if deploy_all else "Single-agent"
-    summary_text = f"{mode} · {num_flights} aircraft · {total_conflicts} conflict(s) · {total_restricted_intrusions} restricted intrusion(s)"
+    summary_text = f"Multi-agent · {num_flights} aircraft · {total_conflicts} conflict(s) · {total_restricted_intrusions} restricted intrusion(s)"
     ax.set_title(f"Aircraft Trajectories\n{summary_text}", fontsize=11, fontweight='bold', pad=15)
     ax.set_xlabel("X coordinate (km)", fontweight='normal')
     ax.set_ylabel("Y coordinate (km)", fontweight='normal')
@@ -333,7 +331,7 @@ def plot_trajectories(model_path, num_flights=5, deploy_all=True,
 
 # ────────────────────────── EVALUATION METRICS ──────────────────────────
 
-def _eval_episodes_worker(model_path, episode_indices, num_flights, deploy_all, random_heading=False):
+def _eval_episodes_worker(model_path, episode_indices, num_flights, random_heading=False):
     """Worker function that runs a batch of episodes (used by ProcessPoolExecutor)."""
     model = SAC.load(model_path)
     env = Environment(num_flights=num_flights, random_init_heading=random_heading)
@@ -356,14 +354,13 @@ def _eval_episodes_worker(model_path, episode_indices, num_flights, deploy_all, 
 
         while not done:
             current_actions = {}
-            if deploy_all:
-                agent_idx = 0
-                for i in range(num_flights):
-                    if i not in env.done:
-                        obs = normalize_obs(raw_obs_list[agent_idx])
-                        action, _ = model.predict(obs, deterministic=True)
-                        current_actions[i] = action
-                        agent_idx += 1
+            agent_idx = 0
+            for i in range(num_flights):
+                if i not in env.done:
+                    obs = normalize_obs(raw_obs_list[agent_idx])
+                    action, _ = model.predict(obs, deterministic=True)
+                    current_actions[i] = action
+                    agent_idx += 1
 
             for _ in range(ACTION_FREQUENCY):
                 active_indices = [i for i in range(num_flights) if i not in env.done]
@@ -393,11 +390,11 @@ def _eval_episodes_worker(model_path, episode_indices, num_flights, deploy_all, 
     return local_metrics
 
 
-def run_evaluation(model_path, n_episodes=30, num_flights=5, deploy_all=True, workers=1, random_heading=False):
+def run_evaluation(model_path, n_episodes=30, num_flights=5, workers=1, random_heading=False):
     """Run evaluation and return per-episode metrics (parallelized across workers)."""
     if workers <= 1:
         # Single-process fallback
-        return _eval_episodes_worker(model_path, list(range(n_episodes)), num_flights, deploy_all, random_heading)
+        return _eval_episodes_worker(model_path, list(range(n_episodes)), num_flights, random_heading)
 
     # Split episodes across workers
     episode_batches = [[] for _ in range(workers)]
@@ -416,7 +413,7 @@ def run_evaluation(model_path, n_episodes=30, num_flights=5, deploy_all=True, wo
 
     with ProcessPoolExecutor(max_workers=len(episode_batches)) as executor:
         futures = [
-            executor.submit(_eval_episodes_worker, model_path, batch, num_flights, deploy_all, random_heading)
+            executor.submit(_eval_episodes_worker, model_path, batch, num_flights, random_heading)
             for batch in episode_batches
         ]
         for future in futures:
@@ -649,7 +646,7 @@ def plot_evaluation(model_path, n_episodes=30, num_flights=5,
                     save_path="results/plots/evaluation.png", workers=1, random_heading=False, save_csv=False, save_individual=False):
     """Run evaluation and plot summary metrics (academic styling)."""
     print(f"Running {n_episodes} episodes across {workers} worker(s)...")
-    metrics = run_evaluation(model_path, n_episodes, num_flights, deploy_all=True, workers=workers, random_heading=random_heading)
+    metrics = run_evaluation(model_path, n_episodes, num_flights, workers=workers, random_heading=random_heading)
 
     if save_csv:
         import pandas as pd
@@ -815,7 +812,7 @@ def plot_evaluation_distribution(model_path, n_episodes=30, num_flights=5,
                                   save_path="results/plots/evaluation_dist.png", workers=1, random_heading=False, save_csv=False, save_individual=False):
     """Run evaluation and plot distribution metrics (histograms for conflicts, targets, intrusions, drift)."""
     print(f"Running {n_episodes} episodes across {workers} worker(s)...")
-    metrics = run_evaluation(model_path, n_episodes, num_flights, deploy_all=True, workers=workers, random_heading=random_heading)
+    metrics = run_evaluation(model_path, n_episodes, num_flights, workers=workers, random_heading=random_heading)
 
     # Divide conflicts by 2 (counting pairs)
     metrics["conflicts"] = [int(c / 2.0) for c in metrics["conflicts"]]
@@ -1264,7 +1261,7 @@ if __name__ == "__main__":
                              save_path=os.path.join(args.run_dir, "plots", "training_curves.png"))
 
     elif args.command == "trajectory":
-        plot_trajectories(model_path, args.num_flights, deploy_all=True,
+        plot_trajectories(model_path, args.num_flights,
                           save_path=os.path.join(args.run_dir, "plots", "trajectories.png"),
                           random_heading=random_heading_val)
 

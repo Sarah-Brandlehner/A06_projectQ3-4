@@ -1,14 +1,11 @@
 """
 Evaluation script for the ATC conflict resolution model.
 
-Supports two modes:
-  --deploy-all : Apply the trained policy to ALL agents (parameter sharing)
-  (default)    : Single-actor evaluation (only agent 0 controlled)
+Applies the trained policy to ALL agents (parameter sharing).
 
 Usage:
     python evaluate.py --model results/best_model/best_model.zip --episodes 10 --num-flights 5
-    python evaluate.py --model results/best_model/best_model.zip --episodes 10 --num-flights 5 --deploy-all
-    python evaluate.py --model results/1.5drift_finetune1/best_model/best_model.zip --episodes 50 --num-flights 10 --deploy-all
+    python evaluate.py --model results/1.5drift_finetune1/best_model/best_model.zip --episodes 50 --num-flights 10
 """
 import argparse
 import os
@@ -17,8 +14,8 @@ import matplotlib.pyplot as plt
 from stable_baselines3 import SAC
 
 from atcenv.env import Environment, NUMBER_INTRUDERS_STATE
-from atcenv.sb3_wrapper import (
-    ATCEnvWrapper, ACTION_FREQUENCY, OBS_SIZE,
+from atcenv.multi_agent_wrapper import (
+    ACTION_FREQUENCY, OBS_SIZE,
     INTRUDER_DIST_NORM, INTRUDER_POS_NORM, TARGET_DIST_NORM,
 )
 
@@ -62,40 +59,6 @@ def normalize_obs(raw_obs):
 
     return np.clip(obs, -1.0, 1.0).astype(np.float32)
 
-
-def evaluate_single_actor(model_path: str, n_episodes: int = 10, num_flights: int = 5):
-    """Standard single-actor evaluation (only agent 0 controlled)."""
-    model = SAC.load(model_path)
-    env = ATCEnvWrapper(num_flights=num_flights, training=False)
-
-    total_conflicts = 0
-    total_restricted_intrusions = 0
-    total_targets_reached = 0
-
-    for ep in range(n_episodes):
-        obs, _ = env.reset()
-        done = False
-        ep_conflicts = 0
-        ep_restricted_intrusions = 0
-        while not done:
-            action, _ = model.predict(obs, deterministic=True)
-            obs, reward, terminated, truncated, info = env.step(action)
-            ep_conflicts += len(env._env.conflicts)
-            ep_restricted_intrusions += len(env._env.restricted_airspace_intrusions)
-            done = terminated or truncated
-
-        targets = len(env._env.done)
-        total_conflicts += ep_conflicts
-        total_restricted_intrusions += ep_restricted_intrusions
-        total_targets_reached += targets
-        print(f"  Episode {ep+1}: conflicts={ep_conflicts}, restricted_intrusions={ep_restricted_intrusions}, targets_reached={targets}/{num_flights}")
-
-    env.close()
-
-    print(f"\n=== Single-Actor Results ({n_episodes} episodes) ===")
-    print(f"Avg conflicts/episode:  {total_conflicts / n_episodes:.1f}")
-    print(f"Avg restricted intrusions/episode: {total_restricted_intrusions / n_episodes:.1f}")
-    print(f"Avg targets reached:    {total_targets_reached / n_episodes:.1f} / {num_flights}")
 
 
 def evaluate_all_agents(model_path: str, n_episodes: int = 10, num_flights: int = 5):
@@ -174,13 +137,7 @@ if __name__ == "__main__":
     parser.add_argument("--model", type=str, required=True, help="Path to trained model .zip")
     parser.add_argument("--episodes", type=int, default=10)
     parser.add_argument("--num-flights", type=int, default=5)
-    parser.add_argument("--deploy-all", action="store_true",
-                        help="Apply the model to ALL agents (parameter sharing)")
     args = parser.parse_args()
 
-    if args.deploy_all:
-        print(f"Evaluating with ALL {args.num_flights} agents controlled by model...")
-        evaluate_all_agents(args.model, args.episodes, num_flights=args.num_flights)
-    else:
-        print(f"Evaluating with single-actor (agent 0 only)...")
-        evaluate_single_actor(args.model, args.episodes, num_flights=args.num_flights)
+    print(f"Evaluating with ALL {args.num_flights} agents controlled by model...")
+    evaluate_all_agents(args.model, args.episodes, num_flights=args.num_flights)

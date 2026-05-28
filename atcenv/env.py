@@ -53,10 +53,12 @@ class Environment(gym.Env):
                  distance_init_buffer: Optional[float] = 5.,
                  random_init_heading: bool = True,
                  enable_spawn_relaxation: bool = False,
+                 render_mode: bool = False,
                  **kwargs):
         """
         Initialises the environment
         """
+        self.render_mode = render_mode
         self.num_flights = num_flights
         self.max_area = max_area * (u.nm ** 2)
         self.min_area = min_area * (u.nm ** 2)
@@ -451,7 +453,8 @@ class Environment(gym.Env):
         done_t = (self.i == self.max_episode_len) 
         done_e = (len(self.done) == self.num_flights)
 
-        # self.render() # comment out for training    
+        if self.render_mode:
+            self.render()
 
         return obs, rew, done_t, done_e, {}
 

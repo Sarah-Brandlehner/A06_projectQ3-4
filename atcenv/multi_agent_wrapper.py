@@ -15,10 +15,17 @@ import numpy as np
 from gymnasium import spaces
 
 from atcenv.env import Environment, NUMBER_INTRUDERS_STATE
-from atcenv.sb3_wrapper import (
-    ACTION_FREQUENCY, OBS_SIZE,
-    INTRUDER_DIST_NORM, INTRUDER_POS_NORM, TARGET_DIST_NORM
-)
+# Number of sim steps per RL action (reference uses 5-10)
+ACTION_FREQUENCY = 5
+
+# Observation size: 5 * NUMBER_INTRUDERS_STATE + 10
+OBS_SIZE = 5 * NUMBER_INTRUDERS_STATE + 10
+
+# Normalization constants (matched to reference bluesky-gym ranges)
+INTRUDER_DIST_NORM = 50000.0   # ~27 NM — intruder distances
+INTRUDER_POS_NORM = 13000.0    # ~7 NM — relative dx/dy positions (ref: /13000)
+TARGET_DIST_NORM = 200000.0    # ~108 NM — target can be far
+SPEED_NORM = 300.0             # m/s — aircraft speed normalization
 
 
 class MultiAgentATCWrapper(gym.Env):

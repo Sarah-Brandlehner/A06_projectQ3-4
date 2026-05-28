@@ -7,15 +7,9 @@ heading + speed actions, 2 closest intruders in observation.
 # USE THE NUMBER OF CORES YOUR CPU HAS
 Usage:
     
-<<<<<<< Updated upstream
-    python train_sac.py --timesteps 4000000 --num-flights 10 --num-envs 16 --train-all --run-name "finalhopefully"
+    python train_sac.py --timesteps 4000000 --num-flights 10 --num-envs 16 --run-name "finalhopefully"
 
-    python train_sac.py --timesteps 4000000 --num-flights 10 --num-envs 16 --train-all --run-name "finalhopefully" --load "results/finalhopefully/best_model/best_model.zip"
-=======
-    python train_sac.py --timesteps 4000000 --num-flights 10 --num-envs 24 --train-all --run-name "jan_1"
-
-    python train_sac.py --timesteps 4000000 --num-flights 10 --num-envs 24 --train-all --run-name "jan_3" --load "results/jan_2/best_model/best_model.zip"
->>>>>>> Stashed changes
+    python train_sac.py --timesteps 4000000 --num-flights 10 --num-envs 16 --run-name "finalhopefully" --load "results/finalhopefully/best_model/best_model.zip"
 """
 #jan_1 finished at 3M steps
 import argparse
@@ -36,8 +30,8 @@ from stable_baselines3.common.monitor import Monitor
 # Import Vector Environment wrappers for multiprocessing
 from stable_baselines3.common.vec_env import SubprocVecEnv, DummyVecEnv
 
-from atcenv.sb3_wrapper import (
-    ATCEnvWrapper, ACTION_FREQUENCY, OBS_SIZE,
+from atcenv.multi_agent_wrapper import (
+    ACTION_FREQUENCY, OBS_SIZE,
     INTRUDER_DIST_NORM, INTRUDER_POS_NORM, TARGET_DIST_NORM,
 )
 
@@ -93,7 +87,7 @@ def save_config(args, run_dir):
         f.write(f"Run name: {args.run_name if args.run_name else 'timestamp-based'}\n\n")
 
         f.write(f"--- Training Parameters ---\n")
-        f.write(f"Mode:            {'ALL AGENTS (Deploy-all)' if getattr(args, 'train_all', False) else 'SINGLE ACTOR (Baseline)'}\n")
+        f.write(f"Mode:            ALL AGENTS (Deploy-all)\n")
         f.write(f"Timesteps:       {args.timesteps}\n")
         f.write(f"Num flights:     {args.num_flights}\n")
         f.write(f"Num envs:        {args.num_envs}\n")
@@ -132,12 +126,6 @@ def save_config(args, run_dir):
     print(f"Config saved to {save_path}")
 
 
-def make_env(num_flights: int = 10, **kwargs):
-    """Create a monitored environment instance."""
-    env = ATCEnvWrapper(num_flights=num_flights, **kwargs)
-    return Monitor(env)
-
-
 def train(args):
     # Determine the run directory based on the run name or timestamp
     if args.run_name:
@@ -154,43 +142,34 @@ def train(args):
 
     print(f"Is PyTorch using GPU? {torch.cuda.is_available()}")
     
-    if args.train_all:
-        print(f"Deploying shared policy over ALL {args.num_flights} active flights simultaneously.")
+    print(f"Deploying shared policy over ALL {args.num_flights} active flights simultaneously.")
+    
+    if args.num_envs > 1:
+        print(f"Parallelizing Shared Policy across {args.num_envs} CPU Cores (Effective Batch: {args.num_envs * args.num_flights} experiences/step)")
+        from atcenv.multi_agent_wrapper import SharedPolicyVecEnv, SubprocMultiAgentVecEnv
+        from stable_baselines3.common.vec_env import VecMonitor
         
-        if args.num_envs > 1:
-            print(f"Parallelizing Shared Policy across {args.num_envs} CPU Cores (Effective Batch: {args.num_envs * args.num_flights} experiences/step)")
-            from atcenv.multi_agent_wrapper import SharedPolicyVecEnv, SubprocMultiAgentVecEnv
-            from stable_baselines3.common.vec_env import VecMonitor
-            
-            def make_shared_env_fn():
-                return SharedPolicyVecEnv(num_flights=args.num_flights)
+        def make_shared_env_fn():
+            return SharedPolicyVecEnv(num_flights=args.num_flights)
 
-            base_env = SubprocMultiAgentVecEnv([make_shared_env_fn for _ in range(args.num_envs)], num_flights=args.num_flights)
-            train_env = VecMonitor(base_env)
-            
-            # Eval environment only needs 1 core
-            eval_env = VecMonitor(SharedPolicyVecEnv(num_flights=args.num_flights))
-            
-            effective_envs = args.num_envs * args.num_flights
-        else:
-            print(f"Running Shared Policy on 1 CPU Core (Effective Batch: {args.num_flights} experiences/step)")
-            from atcenv.multi_agent_wrapper import SharedPolicyVecEnv
-            from stable_baselines3.common.vec_env import VecMonitor
-            
-            # SharedPolicyVecEnv inherently behaves as a VecEnv of size N
-            base_env = SharedPolicyVecEnv(num_flights=args.num_flights)
-            train_env = VecMonitor(base_env)
-            eval_env = VecMonitor(SharedPolicyVecEnv(num_flights=args.num_flights))
-            
-            effective_envs = args.num_flights
+        base_env = SubprocMultiAgentVecEnv([make_shared_env_fn for _ in range(args.num_envs)], num_flights=args.num_flights)
+        train_env = VecMonitor(base_env)
+        
+        # Eval environment only needs 1 core
+        eval_env = VecMonitor(SharedPolicyVecEnv(num_flights=args.num_flights))
+        
+        effective_envs = args.num_envs * args.num_flights
     else:
-        print(f"Using single-actor baseline on {args.num_envs} CPU cores.")
-        def make_env_fn():
-            return make_env(num_flights=args.num_flights)
-
-        train_env = SubprocVecEnv([make_env_fn for _ in range(args.num_envs)])
-        eval_env = DummyVecEnv([make_env_fn])
-        effective_envs = args.num_envs
+        print(f"Running Shared Policy on 1 CPU Core (Effective Batch: {args.num_flights} experiences/step)")
+        from atcenv.multi_agent_wrapper import SharedPolicyVecEnv
+        from stable_baselines3.common.vec_env import VecMonitor
+        
+        # SharedPolicyVecEnv inherently behaves as a VecEnv of size N
+        base_env = SharedPolicyVecEnv(num_flights=args.num_flights)
+        train_env = VecMonitor(base_env)
+        eval_env = VecMonitor(SharedPolicyVecEnv(num_flights=args.num_flights))
+        
+        effective_envs = args.num_flights
 
     # 4. Create or Load SAC model
     if args.load:
@@ -264,8 +243,7 @@ if __name__ == "__main__":
     parser.add_argument("--num-envs", type=int, default=4) 
     parser.add_argument("--run-name", type=str, default=None,
                         help="Name for the results folder. If not provided, a timestamp is used.")
-    parser.add_argument("--train-all", action="store_true",
-                        help="Train with ALL agents simultaneously (Parameter Sharing) instead of a single actor")
+
     parser.add_argument("--load", type=str, default=None,
                         help="Path to a pre-trained model .zip file to resume from.")
     
