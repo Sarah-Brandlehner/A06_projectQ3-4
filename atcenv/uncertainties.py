@@ -13,14 +13,14 @@ def position_scramble(ac_point, probability, min_dist, max_dist):
     if probability < 0 or probability > 1:
         raise Exception('Probability must be between 0 and 1.')
     
-    # First of all, do we even do this. Do the probability
+    # Do the probability
     probability_roll = random.random()
     if probability_roll >= probability:
         # Roll failed, return same position
         return ac_point
     
     else:
-        # We scrable the position in a random direction
+        # Scrambled the position in a random direction
         random_dir = random.random() * 360
 
         # By a random magnitude
@@ -54,15 +54,15 @@ def apply_position_delay(flight, probability, max_delay, dt, dx, dy):
     prev_dy = flight.prev_dy
     
     if delay_roll >= probability:
-        # Roll failed, return undelayed stuff
+        # Roll failed, return undelayed 
         newx = position.x + dx * dt
         newy = position.y + dy * dt
         return newx, newy
     
     else:
-        # We delay
+        # delay
         random_delay = random.random() * max_delay
-        # We travel the previous speed for the delay amount, then
+        # Travel the previous speed for the delay amount, then
         # the new speed for the remaining time
         newx = position.x + (prev_dx * random_delay + dx * (dt - random_delay))
         newy = position.y + (prev_dy * random_delay + dy * (dt - random_delay))

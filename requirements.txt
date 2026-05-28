@@ -1,6 +1,10 @@
-
 stable-baselines3[extra]==2.4.1
-pettingzoo==1.24.3
-supersuit==3.9.3
 torch>=2.0
-rtamt==0.3.0
+shapely
+pygame
+numpy
+matplotlib
+pandas
+tqdm
+jsonargparse
+tensorboard

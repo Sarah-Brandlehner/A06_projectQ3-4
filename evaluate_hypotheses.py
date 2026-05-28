@@ -55,7 +55,6 @@ TARGET_DIST_NORM = 200000.0
 def normalize_obs_standard(raw_obs):
     """
     Standard Normalizer for 30-dim observation.
-    Aligns exactly with the output of Environment.observation().
     Layout: [intruder_data (20)] [ownship_state (5)] [restricted_airspace (5)]
     """
     obs = np.array(raw_obs, dtype=np.float32)
@@ -87,7 +86,6 @@ def normalize_obs_standard(raw_obs):
 
 def run_episode(model, env_kwargs, num_flights=10, norm_fn=None):
     """
-    Corrected: Applies steering only on sub-step 0.
     Measures drift once per decision step to prevent inflated metrics.
     """
     if norm_fn is None:
@@ -106,21 +104,21 @@ def run_episode(model, env_kwargs, num_flights=10, norm_fn=None):
     had_intrusion = False
 
     while not done:
-        # 1. BRAIN STEP: Decide actions for all active flights
+        # 1. Decide actions for all active flights
         current_actions = {}
         active_indices = [i for i in range(num_flights) if i not in env.done]
 
-        # Ensure we have observations for everyone
+        # Ensure there are enough observations 
         if len(raw_obs_list) != len(active_indices):
             break
 
         for idx, agent_num in enumerate(active_indices):
-            # Use the standard normalizer
+            # Use standard normalizer
             obs = norm_fn(raw_obs_list[idx])
             action, _ = model.predict(obs, deterministic=True)
             current_actions[agent_num] = action
 
-        # 2. PHYSICS STEPS: Step the environment ACTION_FREQUENCY times
+        # 2. Step the environment ACTION_FREQUENCY times
         for sub_step in range(ACTION_FREQUENCY):
             active_now = [i for i in range(num_flights) if i not in env.done]
             if not active_now:
@@ -155,7 +153,7 @@ def run_episode(model, env_kwargs, num_flights=10, norm_fn=None):
         if len(env.restricted_airspace_intrusions) > 0:
             had_intrusion = True
         
-        # Record drift once per decision cycle for efficiency metrics
+        # Record drift once per decision cycle
         for f in env.flights:
             if hasattr(f, 'drift'):
                 cumulative_drift += abs(f.drift)
@@ -352,7 +350,7 @@ def plot_density_sweep(csv_path, out_dir):
 
 def sweep_density(model_path, out_dir, episodes, save_csv=False):
     print("Running Density Sweep (Parallelized)...")
-    densities = np.arange(10, 31, 1) # from 10 to 30
+    densities = np.arange(10, 31, 1) 
     
     all_conflict_episodes = {}
     all_intrusion_episodes = {}
@@ -491,7 +489,7 @@ def generate_heatmap(model, out_dir, episodes, default_flights=10):
     print(f"Generating Heatmap ({episodes} episodes on fixed airspace)...")
     env = Environment(num_flights=default_flights, random_init_heading=False)
     
-    # Initialize fixed geometry - ONE reset to lock airspace
+    # Initialize fixed geometry - lock airspace
     env.reset(default_flights)
     fix_air, fix_res = env.airspace, env.restricted_airspace
     

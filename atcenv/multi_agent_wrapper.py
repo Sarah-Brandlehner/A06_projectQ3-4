@@ -1,8 +1,8 @@
 """
 Gymnasium wrapper to train with ALL agents simultaneously using parameter sharing.
 
-Instead of controlling just aircraft 0 (like sb3_wrapper.py does), this wrapper
-vectorizes the environment internally. Every step, it:
+This wrapper vectorizes the environment internally. 
+Every step, it:
 1. Takes N actions (one for each active aircraft)
 2. Steps the simulation ACTION_FREQUENCY times
 3. Returns N observations, N rewards, and N done flags
@@ -31,10 +31,10 @@ SPEED_NORM = 300.0             # m/s — aircraft speed normalization
 class MultiAgentATCWrapper(gym.Env):
     """
     Multi-actor wrapper for parameter sharing.
-    Internally behaves like a vectorized environment of varying size.
+    Behaves like a vectorized environment of varying size.
     BUT because SB3's VecEnv interface requires a FIXED number of environments,
-    we have to pad the observations/actions to always be `num_flights` size,
-    and simply zero out the padding for 'done' agents.
+    the observations/actions are always `num_flights` size,
+    and padding for 'done' agents is zeroed out.
     """
 
     metadata = {"render_modes": ["rgb_array"]}
@@ -50,7 +50,7 @@ class MultiAgentATCWrapper(gym.Env):
 
 
 
-        raise NotImplementedError("SB3 architecture requires this to subclass VecEnv to work correctly with parameter sharing, which is being handled in the simplified version below.")
+        raise NotImplementedError("SB3 architecture requires subclassing VecEnv to work correctly with parameter sharing, which is handled in the simplified version below.")
 
 
 import stable_baselines3.common.vec_env as vec_env
@@ -127,7 +127,7 @@ class SharedPolicyVecEnv(vec_env.VecEnv):
         """
         SB3 calls this first. Actions shape is (num_flights, 2).
         For aircraft that are 'done', the RL agent will still output an action, 
-        but we must ignore it and force action [0,0].
+        but it is ignored and [0,0] is used instead.
         """
         self.current_actions = np.zeros((self.num_flights, 2), dtype=np.float32)
         
@@ -136,13 +136,13 @@ class SharedPolicyVecEnv(vec_env.VecEnv):
                 self.current_actions[i] = actions[i]
 
     def step_wait(self):
-        """SB3 calls this second. We execute the actions in the env here."""
+        """SB3 calls this second. It executes the actions in the env here"""
         
         self.accumulated_rewards.fill(0.0)
         for name in self._component_names:
             self._accumulated_components[name].fill(0.0)
         
-        # We must track actual environment dones separately, 
+        # Track actual environment dones separately, 
         # because SB3 expects an env to instantly reset when done.
         episode_terminated = False
         episode_truncated = False
@@ -199,11 +199,11 @@ class SharedPolicyVecEnv(vec_env.VecEnv):
             # 2. Reset the environment internally
             raw_obs_list = self._env.reset(self.num_flights)
             
-            # 3. We MUST return True for `done` this step so SB3 knows the episode ended.
-            # We construct a return array where done is True for EVERY agent.
+            # 3. Return True for `done` this step so SB3 knows the episode ended.
+            # Construct a return array where done is True for EVERY agent.
             return_dones = np.ones(self.num_flights, dtype=bool)
             
-            # 4. We MUST return the NEW reset observations for the next episode.
+            # 4. Return the NEW reset observations for the next episode.
             for i in range(self.num_flights):
                 self.buf_obs[i] = self._normalize_obs(raw_obs_list[i])
             
@@ -219,12 +219,12 @@ class SharedPolicyVecEnv(vec_env.VecEnv):
                 is_done_now = (i in self._env.done)
                 
                 if is_done_now and not was_done:
-                    # Agent just finished! This is a terminal state for *this* agent.
+                    # Agent finished. This is a terminal state for this agent.
                     self.buf_dones[i] = True
                     self.buf_obs[i] = np.zeros(OBS_SIZE, dtype=np.float32)
                     self.buf_infos[i]["terminal_observation"] = np.zeros(OBS_SIZE, dtype=np.float32)
 
-            # 4. Fill buf_obs with current active observations
+            # Fill buf_obs with current active observations
             for idx, agent_num in enumerate(active_indices_now):
                 if raw_obs_list:
                     self.buf_obs[agent_num] = self._normalize_obs(raw_obs_list[idx])
@@ -237,7 +237,7 @@ class SharedPolicyVecEnv(vec_env.VecEnv):
                     self.buf_obs[i] = np.zeros(OBS_SIZE, dtype=np.float32)
 
             # Return the buffers as SB3 expects
-            # For ongoing episodes, we just return buf_dones as is
+            # For ongoing episodes, return buf_dones as is
             return self.buf_obs.copy(), self.buf_rews.copy(), self.buf_dones.copy(), list(self.buf_infos)
 
 
@@ -309,9 +309,9 @@ class SubprocMultiAgentVecEnv(VecEnv):
     """
     A custom wrapper that parallelizes `SharedPolicyVecEnv` across CPU cores.
     
-    SB3 cannot normally parallelize VecEnvs (it expects standard Envs inside 
+    SB3 cannot parallelize VecEnvs (it expects standard Envs inside 
     SubprocVecEnv). This class intercepts the (num_flights, obs_dim) outputs from 
-    each Core, and flattens them into a single massive 1D tuple for SB3:
+    each Core, and flattens them into a single 1D tuple for SB3:
     `total_envs = num_cores * num_flights`
     """
     def __init__(self, env_fns, num_flights):
@@ -341,7 +341,7 @@ class SubprocMultiAgentVecEnv(VecEnv):
 
     def step_async(self, actions):
         # actions is shape (total_envs, action_dim)
-        # We must split it into (n_workers, num_flights, action_dim)
+        # split it into (n_workers, num_flights, action_dim)
         actions_split = np.split(actions, len(self.remotes))
         for remote, action in zip(self.remotes, actions_split):
             remote.send(("step", action))

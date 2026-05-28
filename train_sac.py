@@ -1,8 +1,7 @@
 """
 SAC training script for the atcenv air traffic conflict resolution environment.
 
-Algorithm choice based on Paper 6 (Badea et al.): SAC with continuous
-heading + speed actions, 2 closest intruders in observation.
+Algorithm: SAC with continuous heading + speed actions
 
 Usage:
     # Start a new training run (Set --num-envs to your CPU core count)

@@ -108,7 +108,6 @@ class Environment(gym.Env):
         drifts = self.drift_penalties() * 0.7
         conflicts = self.conflict_penalties() * -50.0
         
-        # New: Radial Approach Penalty
         # Punishment = (Approach Velocity) / (fixed distance)
         # This creates a "shield" around the zone that gets stronger as you get closer/faster.
         restricted_penalties = np.zeros(self.num_flights)
@@ -125,8 +124,6 @@ class Environment(gym.Env):
                 # AND flying toward the boundary.
                 elif dist < 3000 and approach > 0: 
                     # This penalty is now extremely small (~0.01 per step at max speed)
-                    # It acts only as a 'tie-breaker' to tell the AI which way to turn
-                    # if it was already considering a move.
                     restricted_penalties[i] -= (approach / dist) * 0.05
 
         return drifts + conflicts + restricted_penalties
@@ -167,7 +164,7 @@ class Environment(gym.Env):
         drift = np.zeros(self.num_flights)
         for i, f in enumerate(self.flights):
             if i not in self.done:
-                #drift[i] = 0.5 - abs(f.drift)   # tutor's formula: rewards on-track, penalizes off-track
+                #drift[i] = 0.5 - abs(f.drift)   
                 drift[i]  = 0.5 - (abs(f.drift)**1.5)
         return drift
     
@@ -192,7 +189,7 @@ class Environment(gym.Env):
         return penalties
 
     def alert_penalties(self):
-        """Penalty for predicted conflicts within 2 minutes (paper Eq. 22, wa=5).
+        """Penalty for predicted conflicts within 2 minutes.
         Uses Closest Point of Approach (CPA) between each active pair."""
         penalties = np.zeros(self.num_flights)
         active = [i for i in range(self.num_flights) if i not in self.done]
@@ -276,7 +273,7 @@ class Environment(gym.Env):
 
     def observation(self) -> List:
         """
-        Returns the observation of each agent using fast NumPy vectorization.
+        Returns the observation of each agent using NumPy vectorization.
         Layout (5*N + 19): cur_dis, pred_dis, dx, dy, trackdif, airspeed,
         optimal_airspeed, target_dist, sin(drift), cos(drift), in_restricted, heading_into_restricted,
         + 1 closest restricted point (distance, dx, dy for each)
@@ -352,14 +349,14 @@ class Environment(gym.Env):
             obs.append(math.sin(float(f.drift)))
             obs.append(math.cos(float(f.drift)))
             
-            # --- NEW Restricted Airspace State (5 values) ---
+            # --- Restricted Airspace State (5 values) ---
             dist, s_brg, c_brg, approach = f.closest_restricted_point(self.restricted_airspace)
             
             obs.append(1.0 if f.in_restricted_airspace(self.restricted_airspace) else 0.0) # 1
             obs.append(dist)     # 2
             obs.append(s_brg)    # 3
             obs.append(c_brg)    # 4
-            obs.append(approach) # 5 (Replaces binary 'heading_into')
+            obs.append(approach) # 5
 
             observations_all.append(obs)
 
@@ -408,7 +405,6 @@ class Environment(gym.Env):
         """
         for i, f in enumerate(self.flights):
             if i not in self.done:
-                # Fast math hypotenuse instead of Shapely object distance
                 distance = math.hypot(f.position.x - f.target.x, f.position.y - f.target.y)
                 if distance < self.tol:
                     self.done.add(i)
@@ -501,7 +497,7 @@ class Environment(gym.Env):
                     # Safety break for training - log error and proceed to avoid hang
                     print(f"Warning: Could not find valid spawn after {attempts} attempts. Training might hang. Check airspace size or num_flights.")
                     break
-                    # if current_buffer == 1.1: we are at the safety limit, just keep trying at 1.1
+                    # if current_buffer == 1.1: safety limit, keep trying at 1.1
 
         self.i = 0
         self.conflicts = set()

@@ -55,7 +55,7 @@ def normalize_obs(raw_obs):
         
         # sin/cos (res_idx + 2, + 3) -> already [-1, 1], no norm needed
         
-        # Approach Rate (res_idx + 4) -> Normalize by max speed (e.g. 250 m/s)
+        # Approach Rate (res_idx + 4) -> Normalize by max speed 
         obs[res_idx+4] = obs[res_idx+4] / 250.0
 
     return np.clip(obs, -1.0, 1.0).astype(np.float32)
