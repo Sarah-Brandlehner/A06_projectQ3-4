@@ -916,12 +916,12 @@ def compare_policies(model_path, n_episodes=100, num_flights=5, workers=1,
     """Run MVP only, compare against hardcoded SAC baseline results."""
     
     # Hardcoded SAC baseline results (from paper/prior evaluation)
-    # Format: {metric: (mean_value, lower_ci, upper_ci)}
+    # Format: {metric: (mean_value, lower_bound, upper_bound)}
     sac_baseline = {
         "conflict_free_pct": (91.4, 90.30, 92.50),
         "intrusion_free_pct": (84.4, 82.98, 85.82),
         "targets_reached": (9.35, 9.32, 9.38),
-        "mean_conflicts": (0.1076 , 0.09 , 0.12 ),  # Divide by 2 for pair-wise
+        "mean_conflicts": (0.1076, 0.09, 0.12),
         "cumulative_drift": (94.42, 93.03, 96.80),
     }
     
@@ -966,9 +966,12 @@ def compare_policies(model_path, n_episodes=100, num_flights=5, workers=1,
         ("intrusion_free_pct", mv_if_pct, mv_if_lo, mv_if_hi, "Intrusion-Free Episodes", "Intrusion-Free Rate (%)"),
     ]):
         sac_val, sac_lo, sac_hi = sac_baseline[sac_key]
+        # Convert bounds to error distances: error = distance from mean
+        sac_err_lo = sac_val - sac_lo
+        sac_err_hi = sac_hi - sac_val
         
         _bar_with_ci(ax, xs, [sac_val, mvp_pct], 
-                     [sac_lo, mvp_lo], [sac_hi, mvp_hi],
+                     [sac_err_lo, mvp_lo], [sac_err_hi, mvp_hi],
                      colors, labels, bar_width=bar_w, edge_colors=edge_colors)
         ax.set_xticks(tick_locs)
         ax.set_xticklabels(labels, fontsize=12)
@@ -993,9 +996,15 @@ def compare_policies(model_path, n_episodes=100, num_flights=5, workers=1,
     pair_edges  = [EDGE_SAC,  EDGE_MVP,  EDGE_SAC,  EDGE_MVP]
     pair_labels  = ["SAC", "MVP", "SAC", "MVP"]
 
-    # Mean conflicts (SAC divided by 2 already)
+    # Mean conflicts (MVP divided by 2 for pair-wise)
     sac_cf_val, sac_cf_lo, sac_cf_hi = sac_baseline["mean_conflicts"]
+    sac_cf_err_lo = sac_cf_val - sac_cf_lo
+    sac_cf_err_hi = sac_cf_hi - sac_cf_val
+    
     mvp_cf_val, mvp_cf_lo, mvp_cf_hi = _normal_ci(mvp_m["conflicts"], confidence)
+    mvp_cf_val = mvp_cf_val / 2.0
+    mvp_cf_lo = mvp_cf_lo / 2.0
+    mvp_cf_hi = mvp_cf_hi / 2.0
     
     # Mean intrusions (MVP from data; SAC not provided, use MVP as placeholder)
     mvp_intr_val, mvp_intr_lo, mvp_intr_hi = _normal_ci(mvp_m["restricted_intrusions"], confidence)
@@ -1003,8 +1012,8 @@ def compare_policies(model_path, n_episodes=100, num_flights=5, workers=1,
     sac_intr_val, sac_intr_lo, sac_intr_hi = mvp_intr_val, mvp_intr_lo, mvp_intr_hi
 
     vals2 = [sac_cf_val, mvp_cf_val, sac_intr_val, mvp_intr_val]
-    elos2 = [sac_cf_lo, mvp_cf_lo, sac_intr_lo, mvp_intr_lo]
-    ehis2 = [sac_cf_hi, mvp_cf_hi, sac_intr_hi, mvp_intr_hi]
+    elos2 = [sac_cf_err_lo, mvp_cf_lo, sac_intr_lo, mvp_intr_lo]
+    ehis2 = [sac_cf_err_hi, mvp_cf_hi, sac_intr_hi, mvp_intr_hi]
 
     _bar_with_ci(ax2, pair_xs, vals2, elos2, ehis2,
                  pair_colors, pair_labels, bar_width=bar_w, edge_colors=pair_edges)
@@ -1027,8 +1036,11 @@ def compare_policies(model_path, n_episodes=100, num_flights=5, workers=1,
     fig3.suptitle(f"Mean Targets Reached — SAC vs MVP\n{subtitle}", fontsize=12, fontweight="bold")
 
     sv3, s_lo3, s_hi3 = sac_baseline["targets_reached"]
+    s_err_lo3 = sv3 - s_lo3
+    s_err_hi3 = s_hi3 - sv3
+    
     mv3, m_lo3, m_hi3 = _normal_ci(mvp_m["targets_reached"], confidence)
-    _bar_with_ci(ax3, xs, [sv3, mv3], [s_lo3, m_lo3], [s_hi3, m_hi3],
+    _bar_with_ci(ax3, xs, [sv3, mv3], [s_err_lo3, m_lo3], [s_err_hi3, m_hi3],
                  colors, labels, bar_width=bar_w, edge_colors=edge_colors)
     ax3.axhline(num_flights, color="#555555", linestyle="--", linewidth=1.2,
                 alpha=0.6, zorder=2)
@@ -1053,8 +1065,11 @@ def compare_policies(model_path, n_episodes=100, num_flights=5, workers=1,
     fig4.suptitle(f"Mean Cumulative Drift — SAC vs MVP\n{subtitle}", fontsize=12, fontweight="bold")
 
     sv4, s_lo4, s_hi4 = sac_baseline["cumulative_drift"]
+    s_err_lo4 = sv4 - s_lo4
+    s_err_hi4 = s_hi4 - sv4
+    
     mv4, m_lo4, m_hi4 = _normal_ci(mvp_m["total_drift"], confidence)
-    _bar_with_ci(ax4, xs, [sv4, mv4], [s_lo4, m_lo4], [s_hi4, m_hi4],
+    _bar_with_ci(ax4, xs, [sv4, mv4], [s_err_lo4, m_lo4], [s_err_hi4, m_hi4],
                  colors, labels, bar_width=bar_w, edge_colors=edge_colors)
     ax4.set_xticks(tick_locs)
     ax4.set_xticklabels(labels, fontsize=12)
