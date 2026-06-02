@@ -1,0 +1,10 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python bench_mvp.py --episodes 100 --num-flights 10 --workers 6 --tag \"v5-0.30-floor\" --resolver improved)",
+      "Bash(python bench_mvp.py --episodes 200 --num-flights 10 --workers 6 --tag \"v5-final\" --resolver improved)",
+      "Bash(python bench_mvp.py --episodes 200 --num-flights 10 --workers 6 --tag \"v0-baseline\" --resolver original)",
+      "Bash(python -c \"import ast; ast.parse\\(open\\('evaluate_hypotheses_changed.py', encoding='utf-8'\\).read\\(\\)\\); print\\('OK'\\)\")"
+    ]
+  }
+}

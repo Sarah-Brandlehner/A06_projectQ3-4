@@ -52,10 +52,13 @@ class Environment(gym.Env):
                  min_distance: Optional[float] = 5.,
                  distance_init_buffer: Optional[float] = 5.,
                  random_init_heading: bool = True,
+                 enable_spawn_relaxation: bool = False,
+                 render_mode: bool = False,
                  **kwargs):
         """
         Initialises the environment
         """
+        self.render_mode = render_mode
         self.num_flights = num_flights
         self.max_area = max_area * (u.nm ** 2)
         self.min_area = min_area * (u.nm ** 2)
@@ -65,6 +68,7 @@ class Environment(gym.Env):
         self.max_episode_len = max_episode_len
         self.distance_init_buffer = distance_init_buffer
         self.random_init_heading = random_init_heading
+        self.enable_spawn_relaxation = enable_spawn_relaxation
         self.dt = dt
 
         # tolerance to consider that the target has been reached (in meters)
@@ -101,26 +105,28 @@ class Environment(gym.Env):
         return None
 
     def reward(self) -> List:
-        # Tutor's hybrid drift reward + zero target reward
-        drifts     = self.drift_penalties() * 0.5                # tutor's weight (+0.2 since formula uses 0.5 - abs(drift))
-        conflicts  = self.conflict_penalties() * -15             # tutor's weight
+        drifts = self.drift_penalties() * 0.7
+        conflicts = self.conflict_penalties() * -50.0
         
-        restricted = self.restricted_airspace_penalties() * -5
+        # Punishment = (Approach Velocity) / (fixed distance)
+        # This creates a "shield" around the zone that gets stronger as you get closer/faster.
+        restricted_penalties = np.zeros(self.num_flights)
+        for i, f in enumerate(self.flights):
+            if i not in self.done:
+                dist, _, _, approach = f.closest_restricted_point(self.restricted_airspace)
+                if f.in_restricted_airspace(self.restricted_airspace):
+                    restricted_penalties[i] -=25.0 # Penalty for being inside
+                    if approach > 0:
+                        # The faster they fly toward the exit, the less the penalty hurts.
+                        restricted_penalties[i] += (approach / self.max_speed) * 3.0
+                
+                # Only "nudge" them if they are close
+                # AND flying toward the boundary.
+                elif dist < 3000 and approach > 0: 
+                    # This penalty is now extremely small (~0.01 per step at max speed)
+                    restricted_penalties[i] -= (approach / dist) * 0.05
 
-        heading_into_restricted = self.heading_into_restricted_penalties() * -0.025
-
-        # Distance based reward as in -exp(-distance)
-        exp_grad_restricted = self.restricted_area_exp_grad_penalties(1.0) * 1.0  # weights to be tuned
-        
-        
-        target     = self.reachedTarget() * 10                  # tutor disables target reward completely
-        
-        # proximity  = self.proximity_penalties() * -2.0         # disabled
-        # what kinda worked was -0.5 for drift (should be higher tho), -6 for conflict, -4 for restricted, -0.25 for heading, 10 for target
-        # -hits targets - -0.6, -7.5, -4, -0.25, +12
-        # kinda works -0.6, -10, -0, -0, +10 - but doesnt really avoid eachother, with -15 conflict we get like 2.5 avconflict, not bad
-        tot_reward = drifts + conflicts + alerts + target + restricted + heading_into_restricted + exp_grad_restricted
-        return tot_reward
+        return drifts + conflicts + restricted_penalties
 
     def reward_components(self):
         """Return per-flight arrays for each weighted reward component."""
@@ -157,7 +163,8 @@ class Environment(gym.Env):
         drift = np.zeros(self.num_flights)
         for i, f in enumerate(self.flights):
             if i not in self.done:
-                drift[i] = 0.5 - abs(f.drift)   # tutor's formula: rewards on-track, penalizes off-track
+                #drift[i] = 0.5 - abs(f.drift)   
+                drift[i]  = 0.5 - (abs(f.drift)**1.5)
         return drift
     
     def restricted_airspace_penalties(self):
@@ -180,12 +187,9 @@ class Environment(gym.Env):
                 penalties[i] = 1
         return penalties
 
-    def restricted_area_exp_grad_penalties(self, dist_weight=1.0):
-        """
-        Exponential gradient penalty based on distance to restricted airspace border.
-        Returns -1 if inside restricted airspace, otherwise (-1)*exp((-1)*distance/dist_weight)
-        where distance is the closest distance to the border.
-        """
+    def alert_penalties(self):
+        """Penalty for predicted conflicts within 2 minutes.
+        Uses Closest Point of Approach (CPA) between each active pair."""
         penalties = np.zeros(self.num_flights)
         for i, f in enumerate(self.flights):
             if i not in self.done and self.restricted_airspace:
@@ -242,7 +246,7 @@ class Environment(gym.Env):
 
     def observation(self) -> List:
         """
-        Returns the observation of each agent using fast NumPy vectorization.
+        Returns the observation of each agent using NumPy vectorization.
         Layout (5*N + 19): cur_dis, pred_dis, dx, dy, trackdif, airspeed,
         optimal_airspeed, target_dist, sin(drift), cos(drift), in_restricted, heading_into_restricted,
         + 1 closest restricted point (distance, dx, dy for each)
@@ -311,33 +315,21 @@ class Environment(gym.Env):
             add_padded(dy_all)
             add_padded(trackdif_all)
 
-            # Ownship state
+            # Ownship state (5 values)
             obs.append(f.airspeed)
             obs.append(f.optimal_airspeed)
             obs.append(math.hypot(f.position.x - f.target.x, f.position.y - f.target.y))
             obs.append(math.sin(float(f.drift)))
             obs.append(math.cos(float(f.drift)))
             
-            # Restricted airspace state (as binary 0/1)
-            obs.append(1.0 if f.in_restricted_airspace(self.restricted_airspace) else 0.0)
-            obs.append(1.0 if f.heading_into_restricted_airspace(self.restricted_airspace) else 0.0)
+            # --- Restricted Airspace State (5 values) ---
+            dist, s_brg, c_brg, approach = f.closest_restricted_point(self.restricted_airspace)
             
-            # Closest point of restricted airspace (distance, dx, dy)
-            if self.restricted_airspace:
-                point = Point(f.position.x, f.position.y)
-                poly = self.restricted_airspace.polygon
-                nearest = nearest_points(poly, point)
-                closest_point = nearest[0]  # point on polygon boundary
-                
-                dist = point.distance(closest_point)
-                rel_dx = closest_point.x - f.position.x
-                rel_dy = closest_point.y - f.position.y
-            else:
-                dist, rel_dx, rel_dy = 0.0, 0.0, 0.0
-            
-            obs.append(dist)
-            obs.append(rel_dx)
-            obs.append(rel_dy)
+            obs.append(1.0 if f.in_restricted_airspace(self.restricted_airspace) else 0.0) # 1
+            obs.append(dist)     # 2
+            obs.append(s_brg)    # 3
+            obs.append(c_brg)    # 4
+            obs.append(approach) # 5
 
             observations_all.append(obs)
 
@@ -386,7 +378,6 @@ class Environment(gym.Env):
         """
         for i, f in enumerate(self.flights):
             if i not in self.done:
-                # Fast math hypotenuse instead of Shapely object distance
                 distance = math.hypot(f.position.x - f.target.x, f.position.y - f.target.y)
                 if distance < self.tol:
                     self.done.add(i)
@@ -431,7 +422,8 @@ class Environment(gym.Env):
         done_t = (self.i == self.max_episode_len) 
         done_e = (len(self.done) == self.num_flights)
 
-        # self.render() # comment out for training    
+        if self.render_mode:
+            self.render()
 
         return obs, rew, done_t, done_e, {}
 
@@ -450,16 +442,34 @@ class Environment(gym.Env):
         tol = self.distance_init_buffer * self.tol
         min_distance = self.distance_init_buffer * self.min_distance
         
+        current_buffer = self.distance_init_buffer
+        attempts = 0
         while len(self.flights) < self.num_flights:
+            # Separation required for this attempt
+            min_dist_required = current_buffer * self.min_distance
+            
+            candidate = Flight.random(self.airspace, self.min_speed, self.max_speed, tol, 
+                                     random_init_heading=self.random_init_heading, 
+                                     restricted_airspace=self.restricted_airspace)
             valid = True
-            candidate = Flight.random(self.airspace, self.min_speed, self.max_speed, tol, random_init_heading=self.random_init_heading)
             for f in self.flights:
-                # Replaced shapely distance with math.hypot for fast reset
-                if math.hypot(candidate.position.x - f.position.x, candidate.position.y - f.position.y) < min_distance:
+                if math.hypot(candidate.position.x - f.position.x, candidate.position.y - f.position.y) < min_dist_required:
                     valid = False
                     break
+            
             if valid:
                 self.flights.append(candidate)
+                attempts = 0 # reset for next plane
+            else:
+                attempts += 1
+                if attempts > 100 and self.enable_spawn_relaxation:
+                    # Relax buffer slightly and try again (evaluation only)
+                    current_buffer = max(1.1, current_buffer * 0.9)
+                    attempts = 0
+                # No hard attempt cap: keep rejection-sampling until a valid
+                # spawn is found. Restores the pre-safety-break behaviour the
+                # original code had so high-density evaluation sweeps don't
+                # silently produce empty data points.
 
         self.i = 0
         self.conflicts = set()
