@@ -102,8 +102,20 @@ def run_episode(model, env_kwargs, num_flights=10, norm_fn=None):
         norm_fn = normalize_obs_standard
         
     env_kwargs['random_init_heading'] = False
+    # Let the env relax its inter-aircraft buffer (down to 1.1 × min_distance)
+    # after 100 failed spawn attempts. Without this, high-density sweeps spend
+    # minutes per reset rejection-sampling against the 5×min_distance buffer
+    # — close to the random-sequential-adsorption ceiling for the small
+    # airspace draws. Eval-time only; training defaults to the strict buffer.
+    env_kwargs.setdefault('enable_spawn_relaxation', True)
     env = Environment(num_flights=num_flights, **env_kwargs)
     raw_obs_list = env.reset(num_flights)
+
+    # Defensive guard kept as a safety net: with relaxation enabled and the
+    # 2000-attempt cap removed, env.reset should always return num_flights.
+    if len(env.flights) < num_flights:
+        env.close()
+        return None, None, 0, 0.0
 
     done = False
     decision_steps = 0
@@ -187,6 +199,9 @@ def eval_worker(model_path, env_kwargs, num_flights, episodes):
     drifts = []
     for _ in range(episodes):
         had_conflict, had_intrusion, _, d = run_episode(model, env_kwargs, num_flights, norm_fn=normalize_obs_standard)
+        if had_conflict is None:
+            # Spawn shortfall — drop this trial so it doesn't bias the rate.
+            continue
         conflict_episodes.append(had_conflict)
         intrusion_episodes.append(had_intrusion)
         drifts.append(d)
@@ -199,9 +214,17 @@ def run_episode_mvp(env_kwargs, num_flights=10):
 
     env_kwargs = dict(env_kwargs)
     env_kwargs['random_init_heading'] = False
+    # See eval_worker / run_episode for the rationale on spawn relaxation.
+    env_kwargs.setdefault('enable_spawn_relaxation', True)
     env = Environment(num_flights=num_flights, **env_kwargs)
     env.render = lambda: None
     env.reset(num_flights)
+
+    # Defensive guard kept as a safety net (should be unreachable with
+    # relaxation enabled and the 2000-attempt cap removed).
+    if len(env.flights) < num_flights:
+        env.close()
+        return None, None
 
     done = False
     had_conflict = False
@@ -244,6 +267,9 @@ def eval_worker_mvp(env_kwargs, num_flights, episodes):
     intrusion_episodes = []
     for _ in range(episodes):
         had_conflict, had_intrusion = run_episode_mvp(env_kwargs, num_flights)
+        if had_conflict is None:
+            # Spawn shortfall — drop this trial so it doesn't bias the rate.
+            continue
         conflict_episodes.append(had_conflict)
         intrusion_episodes.append(had_intrusion)
     return conflict_episodes, intrusion_episodes
@@ -415,57 +441,42 @@ def plot_density_sweep(csv_path, out_dir):
 
 
 def sweep_density(model_path, out_dir, episodes, save_csv=False):
-    print(f"Running Density Sweep ({episodes} episodes per point)...")
-    densities = np.arange(10, 31, 1)
+    print("Running Density Sweep (Parallelized)...")
+    densities = np.arange(10, 31, 1) # from 10 to 30
     
-    # Store results in lists
-    results_conflict = {d: [] for d in densities}
-    results_intrusion = {d: [] for d in densities}
-    
-    # Break episodes into smaller chunks (e.g., 25 episodes per task)
-    # This ensures all CPU cores stay busy until the very last episode.
-    chunk_size = 5
-    
-    with ProcessPoolExecutor(max_workers=7) as executor:
-        futures_to_density = {}
-        
+    all_conflict_episodes = {}
+    all_intrusion_episodes = {}
+
+    with ProcessPoolExecutor() as executor:
+        # Pass a smaller distance_init_buffer (2.0) and enable relaxation to allow aircraft to fit at high densities
+        futures = {d: executor.submit(eval_worker, model_path, {'distance_init_buffer': 2.0, 'enable_spawn_relaxation': True}, d, episodes) for d in densities}
+
+        for d, future in tqdm(futures.items(), desc="Density Sweep"):
+            conflict_episodes, intrusion_episodes, drift_arr = future.result()
+            all_conflict_episodes[d] = conflict_episodes
+            all_intrusion_episodes[d] = intrusion_episodes
+
+    if save_csv:
+        import pandas as pd
+        data = {}   
         for d in densities:
-            remaining = episodes
-            while remaining > 0:
-                n = min(chunk_size, remaining)
-                # Submit a chunk of n episodes for density d
-                future = executor.submit(eval_worker, model_path, {}, d, n)
-                futures_to_density[future] = d
-                remaining -= n
-
-        # as_completed updates the bar every time a chunk finishes
-        for future in tqdm(as_completed(futures_to_density), 
-                          total=len(futures_to_density), 
-                          desc="Density Sweep Progress"):
-            d = futures_to_density[future]
-            try:
-                conflict_episodes, intrusion_episodes, _ = future.result()
-                results_conflict[d].extend(conflict_episodes)
-                results_intrusion[d].extend(intrusion_episodes)
-            except Exception as exc:
-                print(f"Density {d} generated an exception: {exc}")
-
-    # --- Data Saving Logic ---
-    import pandas as pd
-    data = {}
-    for d in densities:
-        data[f"Density_{d}_Conflicts"] = results_conflict[d]
-        data[f"Density_{d}_Intrusions"] = results_intrusion[d]
-    
-    df = pd.DataFrame(data)
-    filename = "density_sweep.csv" if save_csv else "temp_density_sweep.csv"
-    csv_path = os.path.join(out_dir, filename)
-    df.to_csv(csv_path, index=False)
-    
-    print(f"Simulations complete. Generating plot...")
-    plot_density_sweep(csv_path, out_dir)
-    
-    if not save_csv:
+            data[f"Density_{d}_Conflicts"] = all_conflict_episodes[d]
+            data[f"Density_{d}_Intrusions"] = all_intrusion_episodes[d]
+        df = pd.DataFrame(data)
+        csv_path = os.path.join(out_dir, "density_sweep.csv")
+        df.to_csv(csv_path, index=False)
+        print(f"Saved density sweep metrics to {csv_path}")
+        plot_density_sweep(csv_path, out_dir)
+    else:
+        import pandas as pd
+        data = {}
+        for d in densities:
+            data[f"Density_{d}_Conflicts"] = all_conflict_episodes[d]
+            data[f"Density_{d}_Intrusions"] = all_intrusion_episodes[d]
+        df = pd.DataFrame(data)
+        csv_path = os.path.join(out_dir, "temp_density_sweep.csv")
+        df.to_csv(csv_path, index=False)
+        plot_density_sweep(csv_path, out_dir)
         os.remove(csv_path)
 
 SAC_COLOR = 'tab:blue'
@@ -477,7 +488,10 @@ def _rates_from_bool_array(data):
     arr = arr[~np.isnan(arr.astype(float))] if arr.dtype != bool else arr
     n = len(arr)
     if n == 0:
-        return 0.0, 0.0
+        # No usable trials (e.g. every spawn failed at very high density).
+        # Return NaN so the plotter skips this x and the line shows a gap,
+        # rather than drawing a misleading 0% point.
+        return float('nan'), float('nan')
     mean = float(np.mean(arr.astype(float))) * 100.0
     if n > 1:
         ci = 1.96 * (float(np.std(arr.astype(float), ddof=1)) * 100.0) / math.sqrt(n)
@@ -490,13 +504,21 @@ def _plot_compare_single_axis(xs, sac_vals, sac_ci, mvp_vals, mvp_ci,
                               xlabel, ylabel, out_path, vline_x=None, vline_label=None):
     fig, ax = plt.subplots(figsize=(10, 6))
 
-    ax.plot(xs, sac_vals, color=SAC_COLOR, marker='o', linewidth=1.5, label='SAC')
-    ax.fill_between(xs, np.maximum(0, sac_vals - sac_ci), sac_vals + sac_ci,
-                    color=SAC_COLOR, alpha=0.15)
-
-    ax.plot(xs, mvp_vals, color=MVP_COLOR, marker='s', linewidth=1.5, linestyle='--', label='MVP')
+    # MVP drawn first with hollow square markers; SAC drawn on top with filled
+    # circles outlined in white. Hollow MVP and outlined SAC make both markers
+    # legible even when they coincide (e.g. both at 0%) or when one marker
+    # sits at y=0 on the x-axis spine, or when a fill_between band crosses it.
     ax.fill_between(xs, np.maximum(0, mvp_vals - mvp_ci), mvp_vals + mvp_ci,
-                    color=MVP_COLOR, alpha=0.15)
+                    color=MVP_COLOR, alpha=0.15, zorder=1)
+    ax.plot(xs, mvp_vals, color=MVP_COLOR, marker='s', markersize=7,
+            linewidth=1.5, linestyle='--', markerfacecolor='none',
+            markeredgewidth=1.5, label='MVP', zorder=3)
+
+    ax.fill_between(xs, np.maximum(0, sac_vals - sac_ci), sac_vals + sac_ci,
+                    color=SAC_COLOR, alpha=0.15, zorder=1)
+    ax.plot(xs, sac_vals, color=SAC_COLOR, marker='o', markersize=7,
+            linewidth=1.5, markeredgecolor='white', markeredgewidth=1.0,
+            label='SAC', zorder=4)
 
     if vline_x is not None:
         ax.axvline(x=vline_x, color='gray', linestyle=':', label=vline_label)
@@ -505,7 +527,9 @@ def _plot_compare_single_axis(xs, sac_vals, sac_ci, mvp_vals, mvp_ci,
     ax.set_ylabel(ylabel)
     ax.grid(True, alpha=0.3, linestyle='--')
 
-    ylim_max = max(float(np.max(sac_vals + sac_ci)), float(np.max(mvp_vals + mvp_ci))) * 1.1 + 2
+    sac_top = float(np.nanmax(sac_vals + sac_ci)) if np.any(~np.isnan(sac_vals)) else 0.0
+    mvp_top = float(np.nanmax(mvp_vals + mvp_ci)) if np.any(~np.isnan(mvp_vals)) else 0.0
+    ylim_max = max(sac_top, mvp_top) * 1.1 + 2
     if ylim_max < 20:
         ylim_max = 20
     ax.set_ylim([-2, ylim_max])
@@ -611,12 +635,15 @@ def sweep_airspace_compare(model_path, out_dir, episodes, default_flights=10, sa
             mvp_if[ratio] = i
 
     import pandas as pd
+    # Wrap each column in pd.Series so columns of unequal length (e.g. when
+    # some episodes were skipped due to spawn failures) are padded with NaN
+    # instead of raising "All arrays must be of the same length".
     data = {}
     for ratio in ratios:
-        data[f"SAC_Ratio_{ratio:.3f}_Conflicts"] = sac_cf[ratio]
-        data[f"SAC_Ratio_{ratio:.3f}_Intrusions"] = sac_if[ratio]
-        data[f"MVP_Ratio_{ratio:.3f}_Conflicts"] = mvp_cf[ratio]
-        data[f"MVP_Ratio_{ratio:.3f}_Intrusions"] = mvp_if[ratio]
+        data[f"SAC_Ratio_{ratio:.3f}_Conflicts"] = pd.Series(sac_cf[ratio])
+        data[f"SAC_Ratio_{ratio:.3f}_Intrusions"] = pd.Series(sac_if[ratio])
+        data[f"MVP_Ratio_{ratio:.3f}_Conflicts"] = pd.Series(mvp_cf[ratio])
+        data[f"MVP_Ratio_{ratio:.3f}_Intrusions"] = pd.Series(mvp_if[ratio])
     df = pd.DataFrame(data)
     filename = "airspace_sweep_compare.csv" if save_csv else "temp_airspace_sweep_compare.csv"
     csv_path = os.path.join(out_dir, filename)
@@ -666,13 +693,16 @@ def sweep_density_compare(model_path, out_dir, episodes, save_csv=False):
                 print(f"{algo} density {d} generated an exception: {exc}")
 
     import pandas as pd
+    # Wrap each column in pd.Series so columns of unequal length (e.g. when
+    # some episodes were skipped due to spawn failures) are padded with NaN
+    # instead of raising "All arrays must be of the same length".
     data = {}
     for d in densities:
         d = int(d)
-        data[f"SAC_Density_{d}_Conflicts"] = sac_cf[d]
-        data[f"SAC_Density_{d}_Intrusions"] = sac_if[d]
-        data[f"MVP_Density_{d}_Conflicts"] = mvp_cf[d]
-        data[f"MVP_Density_{d}_Intrusions"] = mvp_if[d]
+        data[f"SAC_Density_{d}_Conflicts"] = pd.Series(sac_cf[d])
+        data[f"SAC_Density_{d}_Intrusions"] = pd.Series(sac_if[d])
+        data[f"MVP_Density_{d}_Conflicts"] = pd.Series(mvp_cf[d])
+        data[f"MVP_Density_{d}_Intrusions"] = pd.Series(mvp_if[d])
     df = pd.DataFrame(data)
     filename = "density_sweep_compare.csv" if save_csv else "temp_density_sweep_compare.csv"
     csv_path = os.path.join(out_dir, filename)

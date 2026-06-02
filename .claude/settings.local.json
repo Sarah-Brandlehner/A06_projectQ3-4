@@ -25,7 +25,10 @@
       "Bash(python bench_mvp.py --episodes 100 --num-flights 10 --workers 6 --tag \"v5-converge-fix\" --resolver improved)",
       "Bash(python bench_mvp.py --episodes 100 --num-flights 10 --workers 6 --tag \"v0-baseline\" --resolver original)",
       "Bash(python bench_mvp.py --episodes 100 --num-flights 10 --workers 6 --tag \"restored-v4\" --resolver improved)",
-      "Bash(python bench_mvp.py --episodes 100 --num-flights 10 --workers 6 --tag \"v5-0.25-floor\" --resolver improved)"
+      "Bash(python bench_mvp.py --episodes 100 --num-flights 10 --workers 6 --tag \"v5-0.25-floor\" --resolver improved)",
+      "Bash(python -c ' *)",
+      "Bash(python evaluate_hypotheses_changed.py plot-density-compare --csv-path \"results/thisoneLite/hypotheses_plots/density_sweep_compare.csv\")",
+      "Bash(python evaluate_hypotheses_changed.py plot-airspace-compare --csv-path \"results/thisoneLite/hypotheses_plots/airspace_sweep_compare.csv\")"
     ]
   }
 }

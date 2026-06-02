@@ -52,11 +52,13 @@ class Environment(gym.Env):
                  min_distance: Optional[float] = 5.,
                  distance_init_buffer: Optional[float] = 5.,
                  random_init_heading: bool = True,
-                 restricted_scale_factor: Optional[float] = None,
+                 enable_spawn_relaxation: bool = False,
+                 render_mode: bool = False,
                  **kwargs):
         """
         Initialises the environment
         """
+        self.render_mode = render_mode
         self.num_flights = num_flights
         self.max_area = max_area * (u.nm ** 2)
         self.min_area = min_area * (u.nm ** 2)
@@ -66,7 +68,7 @@ class Environment(gym.Env):
         self.max_episode_len = max_episode_len
         self.distance_init_buffer = distance_init_buffer
         self.random_init_heading = random_init_heading
-        self.restricted_scale_factor = restricted_scale_factor
+        self.enable_spawn_relaxation = enable_spawn_relaxation
         self.dt = dt
 
         # tolerance to consider that the target has been reached (in meters)
@@ -103,10 +105,9 @@ class Environment(gym.Env):
         return None
 
     def reward(self) -> List:
-        drifts = self.drift_penalties() * 0.6
-        conflicts = self.conflict_penalties() * -20.0
+        drifts = self.drift_penalties() * 0.7
+        conflicts = self.conflict_penalties() * -50.0
         
-        # New: Radial Approach Penalty
         # Punishment = (Approach Velocity) / (fixed distance)
         # This creates a "shield" around the zone that gets stronger as you get closer/faster.
         restricted_penalties = np.zeros(self.num_flights)
@@ -114,7 +115,7 @@ class Environment(gym.Env):
             if i not in self.done:
                 dist, _, _, approach = f.closest_restricted_point(self.restricted_airspace)
                 if f.in_restricted_airspace(self.restricted_airspace):
-                    restricted_penalties[i] -=10.0 # Penalty for being inside
+                    restricted_penalties[i] -=25.0 # Penalty for being inside
                     if approach > 0:
                         # The faster they fly toward the exit, the less the penalty hurts.
                         restricted_penalties[i] += (approach / self.max_speed) * 3.0
@@ -123,8 +124,6 @@ class Environment(gym.Env):
                 # AND flying toward the boundary.
                 elif dist < 3000 and approach > 0: 
                     # This penalty is now extremely small (~0.01 per step at max speed)
-                    # It acts only as a 'tie-breaker' to tell the AI which way to turn
-                    # if it was already considering a move.
                     restricted_penalties[i] -= (approach / dist) * 0.05
 
         return drifts + conflicts + restricted_penalties
@@ -165,7 +164,7 @@ class Environment(gym.Env):
         drift = np.zeros(self.num_flights)
         for i, f in enumerate(self.flights):
             if i not in self.done:
-                #drift[i] = 0.5 - abs(f.drift)   # tutor's formula: rewards on-track, penalizes off-track
+                #drift[i] = 0.5 - abs(f.drift)   
                 drift[i]  = 0.5 - (abs(f.drift)**1.5)
         return drift
     
@@ -190,7 +189,7 @@ class Environment(gym.Env):
         return penalties
 
     def alert_penalties(self):
-        """Penalty for predicted conflicts within 2 minutes (paper Eq. 22, wa=5).
+        """Penalty for predicted conflicts within 2 minutes.
         Uses Closest Point of Approach (CPA) between each active pair."""
         penalties = np.zeros(self.num_flights)
         active = [i for i in range(self.num_flights) if i not in self.done]
@@ -274,7 +273,7 @@ class Environment(gym.Env):
 
     def observation(self) -> List:
         """
-        Returns the observation of each agent using fast NumPy vectorization.
+        Returns the observation of each agent using NumPy vectorization.
         Layout (5*N + 19): cur_dis, pred_dis, dx, dy, trackdif, airspeed,
         optimal_airspeed, target_dist, sin(drift), cos(drift), in_restricted, heading_into_restricted,
         + 1 closest restricted point (distance, dx, dy for each)
@@ -350,14 +349,14 @@ class Environment(gym.Env):
             obs.append(math.sin(float(f.drift)))
             obs.append(math.cos(float(f.drift)))
             
-            # --- NEW Restricted Airspace State (5 values) ---
+            # --- Restricted Airspace State (5 values) ---
             dist, s_brg, c_brg, approach = f.closest_restricted_point(self.restricted_airspace)
             
             obs.append(1.0 if f.in_restricted_airspace(self.restricted_airspace) else 0.0) # 1
             obs.append(dist)     # 2
             obs.append(s_brg)    # 3
             obs.append(c_brg)    # 4
-            obs.append(approach) # 5 (Replaces binary 'heading_into')
+            obs.append(approach) # 5
 
             observations_all.append(obs)
 
@@ -406,7 +405,6 @@ class Environment(gym.Env):
         """
         for i, f in enumerate(self.flights):
             if i not in self.done:
-                # Fast math hypotenuse instead of Shapely object distance
                 distance = math.hypot(f.position.x - f.target.x, f.position.y - f.target.y)
                 if distance < self.tol:
                     self.done.add(i)
@@ -451,7 +449,8 @@ class Environment(gym.Env):
         done_t = (self.i == self.max_episode_len) 
         done_e = (len(self.done) == self.num_flights)
 
-        # self.render() # comment out for training    
+        if self.render_mode:
+            self.render()
 
         return obs, rew, done_t, done_e, {}
 
@@ -464,25 +463,40 @@ class Environment(gym.Env):
 
     def reset(self, number_flights_training) -> List:
         self.airspace = Airspace.random(self.min_area, self.max_area)
-        if self.restricted_scale_factor is not None:
-            self.restricted_airspace = RestrictedAirspace.random(self.min_area, self.max_area, scale_factor=self.restricted_scale_factor)
-        else:
-            self.restricted_airspace = RestrictedAirspace.random(self.min_area, self.max_area)
+        self.restricted_airspace = RestrictedAirspace.random(self.min_area, self.max_area)
         self.num_flights = number_flights_training
         self.flights = []
         tol = self.distance_init_buffer * self.tol
         min_distance = self.distance_init_buffer * self.min_distance
         
+        current_buffer = self.distance_init_buffer
+        attempts = 0
         while len(self.flights) < self.num_flights:
+            # Separation required for this attempt
+            min_dist_required = current_buffer * self.min_distance
+            
+            candidate = Flight.random(self.airspace, self.min_speed, self.max_speed, tol, 
+                                     random_init_heading=self.random_init_heading, 
+                                     restricted_airspace=self.restricted_airspace)
             valid = True
-            candidate = Flight.random(self.airspace, self.min_speed, self.max_speed, tol, random_init_heading=self.random_init_heading, restricted_airspace=self.restricted_airspace)
             for f in self.flights:
-                # Replaced shapely distance with math.hypot for fast reset
-                if math.hypot(candidate.position.x - f.position.x, candidate.position.y - f.position.y) < min_distance:
+                if math.hypot(candidate.position.x - f.position.x, candidate.position.y - f.position.y) < min_dist_required:
                     valid = False
                     break
+            
             if valid:
                 self.flights.append(candidate)
+                attempts = 0 # reset for next plane
+            else:
+                attempts += 1
+                if attempts > 100 and self.enable_spawn_relaxation:
+                    # Relax buffer slightly and try again (evaluation only)
+                    current_buffer = max(1.1, current_buffer * 0.9)
+                    attempts = 0
+                # No hard attempt cap: keep rejection-sampling until a valid
+                # spawn is found. Restores the pre-safety-break behaviour the
+                # original code had so high-density evaluation sweeps don't
+                # silently produce empty data points.
 
         self.i = 0
         self.conflicts = set()
