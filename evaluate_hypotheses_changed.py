@@ -313,7 +313,7 @@ def plot_airspace_sweep(csv_path, out_dir):
     if_ci = np.array(if_ci)
 
     fig, ax1 = plt.subplots(figsize=(10, 6))
-    ax1.set_xlabel('Restricted Airspace Ratio')
+    ax1.set_xlabel('Restricted Airspace Scale Factor')
     ax1.set_ylabel('Episodes w/ Conflict (%)', color='tab:blue')
     ax1.plot(ratios, cf_fail_rates, color='tab:blue', marker='o', linewidth=1.5, label='Conflict Episode Rate')
     ax1.fill_between(ratios, np.maximum(0, cf_fail_rates - cf_ci), cf_fail_rates + cf_ci, color='tab:blue', alpha=0.15)
@@ -346,7 +346,7 @@ def sweep_airspace(model_path, out_dir, episodes, default_flights=10, save_csv=F
     all_intrusion_episodes = {}
 
     with ProcessPoolExecutor() as executor:
-        futures = {ratio: executor.submit(eval_worker, model_path, {'restricted_area_ratio': ratio}, default_flights, episodes) for ratio in ratios}
+        futures = {ratio: executor.submit(eval_worker, model_path, {'restricted_scale_factor': ratio}, default_flights, episodes) for ratio in ratios}
 
         for ratio, future in tqdm(futures.items(), desc="Airspace Sweep"):
             conflict_episodes, intrusion_episodes, _ = future.result()
@@ -562,14 +562,14 @@ def plot_airspace_compare(csv_path, out_dir):
 
     _plot_compare_single_axis(
         xs, sac_if, sac_if_ci, mvp_if, mvp_if_ci,
-        xlabel='Restricted Airspace Ratio',
+        xlabel='Restricted Airspace Scale Factor',
         ylabel='Episodes w/ Intrusion (%)',
         out_path=os.path.join(out_dir, "airspace_sweep_intrusions_mvp_vs_sac.png"),
         vline_x=0.20, vline_label='Training Environment Area (20%)')
 
     _plot_compare_single_axis(
         xs, sac_cf, sac_cf_ci, mvp_cf, mvp_cf_ci,
-        xlabel='Restricted Airspace Ratio',
+        xlabel='Restricted Airspace Scale Factor',
         ylabel='Episodes w/ Conflict (%)',
         out_path=os.path.join(out_dir, "airspace_sweep_collisions_mvp_vs_sac.png"),
         vline_x=0.20, vline_label='Training Environment Area (20%)')
@@ -616,11 +616,11 @@ def sweep_airspace_compare(model_path, out_dir, episodes, default_flights=10, sa
 
     with ProcessPoolExecutor() as executor:
         sac_futures = {ratio: executor.submit(eval_worker, model_path,
-                                              {'restricted_area_ratio': ratio},
+                                              {'restricted_scale_factor': ratio},
                                               default_flights, episodes)
                        for ratio in ratios}
         mvp_futures = {ratio: executor.submit(eval_worker_mvp,
-                                              {'restricted_area_ratio': ratio},
+                                              {'restricted_scale_factor': ratio},
                                               default_flights, episodes)
                        for ratio in ratios}
 
