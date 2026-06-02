@@ -608,42 +608,61 @@ def plot_density_compare(csv_path, out_dir):
 
 
 def sweep_airspace_compare(model_path, out_dir, episodes, default_flights=10, save_csv=False):
-    print("Running Airspace Area Sweep (SAC + MVP)...")
+    print(f"Running Airspace Area Sweep (SAC + MVP, {episodes} episodes per point)...")
     ratios = np.arange(0.10, 0.525, 0.025)
 
-    sac_cf, sac_if = {}, {}
-    mvp_cf, mvp_if = {}, {}
+    # Use ratio key formatted to 3 decimals to dodge float-comparison drift
+    # when reassembling chunked results by ratio.
+    def rkey(r): return f"{r:.3f}"
 
+    sac_cf = {rkey(r): [] for r in ratios}
+    sac_if = {rkey(r): [] for r in ratios}
+    mvp_cf = {rkey(r): [] for r in ratios}
+    mvp_if = {rkey(r): [] for r in ratios}
+
+    chunk_size = 5
+
+    # Chunk per-ratio episodes into small batches so the progress bar ticks
+    # frequently and load balances across workers (otherwise one task per
+    # ratio means N-12 workers idle once 12 are picked up).
     with ProcessPoolExecutor() as executor:
-        sac_futures = {ratio: executor.submit(eval_worker, model_path,
-                                              {'restricted_scale_factor': ratio},
-                                              default_flights, episodes)
-                       for ratio in ratios}
-        mvp_futures = {ratio: executor.submit(eval_worker_mvp,
-                                              {'restricted_scale_factor': ratio},
-                                              default_flights, episodes)
-                       for ratio in ratios}
+        futures = {}
+        for r in ratios:
+            remaining = episodes
+            while remaining > 0:
+                n = min(chunk_size, remaining)
+                env_kwargs = {'restricted_scale_factor': float(r)}
+                f_sac = executor.submit(eval_worker, model_path, dict(env_kwargs), default_flights, n)
+                futures[f_sac] = ('SAC', rkey(r))
+                f_mvp = executor.submit(eval_worker_mvp, dict(env_kwargs), default_flights, n)
+                futures[f_mvp] = ('MVP', rkey(r))
+                remaining -= n
 
-        for ratio, future in tqdm(sac_futures.items(), desc="SAC Airspace Sweep"):
-            c, i, _ = future.result()
-            sac_cf[ratio] = c
-            sac_if[ratio] = i
-
-        for ratio, future in tqdm(mvp_futures.items(), desc="MVP Airspace Sweep"):
-            c, i = future.result()
-            mvp_cf[ratio] = c
-            mvp_if[ratio] = i
+        for future in tqdm(as_completed(futures), total=len(futures), desc="Airspace Compare"):
+            algo, k = futures[future]
+            try:
+                if algo == 'SAC':
+                    c, i, _ = future.result()
+                    sac_cf[k].extend(c)
+                    sac_if[k].extend(i)
+                else:
+                    c, i = future.result()
+                    mvp_cf[k].extend(c)
+                    mvp_if[k].extend(i)
+            except Exception as exc:
+                print(f"{algo} ratio {k} generated an exception: {exc}")
 
     import pandas as pd
     # Wrap each column in pd.Series so columns of unequal length (e.g. when
     # some episodes were skipped due to spawn failures) are padded with NaN
     # instead of raising "All arrays must be of the same length".
     data = {}
-    for ratio in ratios:
-        data[f"SAC_Ratio_{ratio:.3f}_Conflicts"] = pd.Series(sac_cf[ratio])
-        data[f"SAC_Ratio_{ratio:.3f}_Intrusions"] = pd.Series(sac_if[ratio])
-        data[f"MVP_Ratio_{ratio:.3f}_Conflicts"] = pd.Series(mvp_cf[ratio])
-        data[f"MVP_Ratio_{ratio:.3f}_Intrusions"] = pd.Series(mvp_if[ratio])
+    for r in ratios:
+        k = rkey(r)
+        data[f"SAC_Ratio_{k}_Conflicts"] = pd.Series(sac_cf[k])
+        data[f"SAC_Ratio_{k}_Intrusions"] = pd.Series(sac_if[k])
+        data[f"MVP_Ratio_{k}_Conflicts"] = pd.Series(mvp_cf[k])
+        data[f"MVP_Ratio_{k}_Intrusions"] = pd.Series(mvp_if[k])
     df = pd.DataFrame(data)
     filename = "airspace_sweep_compare.csv" if save_csv else "temp_airspace_sweep_compare.csv"
     csv_path = os.path.join(out_dir, filename)
@@ -666,7 +685,7 @@ def sweep_density_compare(model_path, out_dir, episodes, save_csv=False):
 
     chunk_size = 5
 
-    with ProcessPoolExecutor(max_workers=7) as executor:
+    with ProcessPoolExecutor() as executor:
         futures = {}
         for d in densities:
             remaining = episodes
