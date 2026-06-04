@@ -2,7 +2,6 @@
 
 This repository contains the codebase for training, evaluating, and visualizing a Reinforcement Learning (RL) model for Air Traffic Control (ATC) conflict resolution. It uses Soft Actor-Critic (SAC) to navigate aircraft to their targets while avoiding conflicts with other aircraft and restricted airspaces. 
 
-**Acknowledgments:** This project is built upon the [atcenv simulation environment by ramondalmau](https://github.com/ramondalmau/atcenv/tree/main).
 
 It also includes a geometric solver (MVP resolver) that acts as a baseline for comparison.
 
@@ -54,3 +53,9 @@ To test the geometric MVP resolver instead of the RL model using parallel proces
 ```bash
 python bench_mvp.py --episodes 100 --num-flights 10 --workers 4
 ```
+
+## Acknowledgments
+
+The authors would like to express their gratitude to Dr. Marta Ribeiro and Ir. Fynn Oppermann for their academic guidance and continuous support throughout this project. Their mentorship, constructive feedback, and regular discussions were invaluable in the development, refinement, and completion of this research paper.
+
+This project is built upon the [atcenv simulation environment by ramondalmau](https://github.com/ramondalmau/atcenv/tree/main).
