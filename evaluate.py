@@ -62,13 +62,13 @@ def normalize_obs(raw_obs):
 
 
 
-def evaluate_all_agents(model_path: str, n_episodes: int = 10, num_flights: int = 5, random_heading: bool = False):
+def evaluate_all_agents(model_path: str, n_episodes: int = 10, num_flights: int = 5, random_heading: bool = False, render: bool = False):
     """
     Deploy the trained policy to ALL agents (parameter sharing).
     Each agent gets its own observation, the same model predicts its action.
     """
     model = SAC.load(model_path)
-    env = Environment(num_flights=num_flights, random_init_heading=random_heading)
+    env = Environment(num_flights=num_flights, random_init_heading=random_heading, render_mode=render)
 
     metrics = {
         "conflicts": [],
@@ -139,7 +139,8 @@ if __name__ == "__main__":
     parser.add_argument("--episodes", type=int, default=10)
     parser.add_argument("--num-flights", type=int, default=5)
     parser.add_argument("--random-heading", action="store_true", help="Enable random initial headings (default is deactivated)")
+    parser.add_argument("--render", action="store_true", help="Turn on the pygame rendering window")
     args = parser.parse_args()
 
     print(f"Evaluating with ALL {args.num_flights} agents controlled by model...")
-    evaluate_all_agents(args.model, args.episodes, num_flights=args.num_flights, random_heading=args.random_heading)
+    evaluate_all_agents(args.model, args.episodes, num_flights=args.num_flights, random_heading=args.random_heading, render=args.render)
