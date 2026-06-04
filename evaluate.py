@@ -7,6 +7,7 @@ Note: Random initial heading is deactivated by default for evaluations.
 Usage:
     python evaluate.py --model results/best_model/best_model.zip --episodes 10 --num-flights 5
     python evaluate.py --model results/best_model.zip --episodes 50 --num-flights 10 --random-heading
+    python evaluate.py --episodes 10 --num-flights 5 --render
 """
 import argparse
 import os

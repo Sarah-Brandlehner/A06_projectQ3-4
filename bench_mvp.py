@@ -7,10 +7,9 @@ Fast headless benchmark harness for the MVP resolver.
   and wiggle proxies (heading reversals, mean |heading action|).
 
 Usage:
-    python bench_mvp.py                              # default: 100 eps, 10 flights, improved resolver
-    python bench_mvp.py --resolver original          # use the baseline v0 resolver
+    python bench_mvp.py                              # default: 100 eps, 10 flights
     python bench_mvp.py --episodes 60 --num-flights 8 --workers 6
-    python bench_mvp.py --tag myrun --resolver improved
+    python bench_mvp.py --tag myrun
 """
 import argparse
 import os

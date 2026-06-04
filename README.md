@@ -16,15 +16,15 @@ It also includes a geometric solver (MVP resolver) that acts as a baseline for c
 
 ## Usage
 
+### General Notes
+- **Multicore Processing:** Many scripts (`train_sac.py`, `bench_mvp.py`, `evaluate_hypotheses.py`, `visualize.py`) utilize multiprocessing for faster execution. The number of parallel environments or workers is usually controlled by the `--num-envs` or `--workers` argument. **Set this to a maximum of the number of CPU cores available on your machine** to prevent performance degradation or system freezes.
+- **Logs:** When training, progress is logged in the `results/<model_name>/eval_logs/` folder. For the default `thisonLite` baseline model, this folder is intentionally empty as the model is already fully trained. It will fill up if you start a new training run.
+
 ### 1. Training a Model
 To train a new SAC model, run:
 ```bash
 python train_sac.py --timesteps 500000 --num-flights 10 --num-envs 4
 ```
-
-*Note on Multicore Processing*: The `--num-envs` parameter specifies how many parallel environments to run simultaneously. Set this to a maximum of the number of CPU cores available on your machine.
-
-*Note on Logs*: When training, progress is logged in the `results/<model_name>/eval_logs/` folder. For the default `thisonLite` baseline model, this folder is intentionally empty as the model is already fully trained. It will fill up if you start a new training run.
 
 ### 2. Evaluating a Model
 To simply evaluate the default model and see basic metrics:

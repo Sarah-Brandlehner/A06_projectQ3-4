@@ -43,7 +43,7 @@ Options:
     --csv-path             Path to the CSV file to plot from (for plot-* modes)
 
 Examples:
-    python evaluate_hypotheses.py all --run-dir results/my_run --episodes 50 --save-csv
+    python evaluate_hypotheses.py all --run-dir results/my_run --episodes 50 --save-csv --workers 4
     python evaluate_hypotheses.py density-sweep --run-dir results/my_run --policy mvp --save-csv
     python evaluate_hypotheses.py plot-airspace --csv-path results/my_run/hypotheses_plots/airspace_sweep.csv
     python evaluate_hypotheses.py reward-progress --incremental-dir results/inc_logs --baseline-dir results/base_logs
@@ -359,14 +359,14 @@ def plot_density_compare(csv_sac, csv_mvp, out_dir):
         plt.close()
         print(f"Saved {filename}")
 
-def sweep_airspace(model_path, out_dir, episodes, default_flights=10, save_csv=False, policy="sac"):
+def sweep_airspace(model_path, out_dir, episodes, default_flights=10, save_csv=False, policy="sac", workers=None):
     print("Running Airspace Area Sweep (Parallelized)...")
     ratios = np.arange(0.10, 0.525, 0.025)
     
     all_conflict_episodes = {}
     all_intrusion_episodes = {}
 
-    with ProcessPoolExecutor() as executor:
+    with ProcessPoolExecutor(max_workers=workers) as executor:
         futures = {ratio: executor.submit(eval_worker, model_path, {'restricted_area_ratio': ratio}, default_flights, episodes, policy) for ratio in ratios}
 
         for ratio, future in tqdm(futures.items(), desc="Airspace Sweep"):
@@ -461,14 +461,14 @@ def plot_density_sweep(csv_path, out_dir):
     print("Saved density_sweep.png")
 
 
-def sweep_density(model_path, out_dir, episodes, save_csv=False, policy="sac"):
+def sweep_density(model_path, out_dir, episodes, save_csv=False, policy="sac", workers=None):
     print("Running Density Sweep (Parallelized)...")
     densities = np.arange(10, 31, 1) 
     
     all_conflict_episodes = {}
     all_intrusion_episodes = {}
 
-    with ProcessPoolExecutor() as executor:
+    with ProcessPoolExecutor(max_workers=workers) as executor:
         # Pass a smaller distance_init_buffer (2.0) and enable relaxation to allow aircraft to fit at high densities
         futures = {d: executor.submit(eval_worker, model_path, {'distance_init_buffer': 2.0, 'enable_spawn_relaxation': True}, d, episodes, policy) for d in densities}
 
@@ -550,7 +550,7 @@ def plot_uncertainties_sweep(csv_path, out_dir):
     plt.close()
     print("Saved uncertainty_ablation.png")
 
-def sweep_uncertainties(model_path, out_dir, episodes, default_flights=10, save_csv=False, policy="sac"):
+def sweep_uncertainties(model_path, out_dir, episodes, default_flights=10, save_csv=False, policy="sac", workers=None):
     print("Running Uncertainty Ablation Sweep (Parallelized)...")
     experiments = [
         ("Base (Ideal)", {}),
@@ -563,7 +563,7 @@ def sweep_uncertainties(model_path, out_dir, episodes, default_flights=10, save_
     all_conflict_episodes = {}
     all_intrusion_episodes = {}
 
-    with ProcessPoolExecutor() as executor:
+    with ProcessPoolExecutor(max_workers=workers) as executor:
         futures = {name: executor.submit(eval_worker, model_path, config, default_flights, episodes, policy) for name, config in experiments}
 
         for name, future in tqdm(futures.items(), desc="Uncertainty Ablation"):
@@ -759,6 +759,7 @@ if __name__ == '__main__':
     parser.add_argument('--csv-sac', default=None, help="Path to the SAC CSV file for comparison modes")
     parser.add_argument('--csv-mvp', default=None, help="Path to the MVP CSV file for comparison modes")
     parser.add_argument('--policy', default='sac', choices=['sac', 'mvp'], help="Policy to evaluate (sac or mvp)")
+    parser.add_argument('--workers', type=int, default=None, help="Number of parallel worker processes (default: all CPU cores)")
     args = parser.parse_args()
     
     # Set academic plot defaults
@@ -827,11 +828,11 @@ if __name__ == '__main__':
             os.makedirs(out_dir, exist_ok=True)
         
         if args.mode in ['airspace-sweep', 'all']:
-            sweep_airspace(model_path, out_dir, args.episodes, save_csv=args.save_csv, policy=args.policy)
+            sweep_airspace(model_path, out_dir, args.episodes, save_csv=args.save_csv, policy=args.policy, workers=args.workers)
         if args.mode in ['density-sweep', 'all']:
-            sweep_density(model_path, out_dir, args.episodes, save_csv=args.save_csv, policy=args.policy)
+            sweep_density(model_path, out_dir, args.episodes, save_csv=args.save_csv, policy=args.policy, workers=args.workers)
         if args.mode in ['uncertainty-ablation', 'all']:
-            sweep_uncertainties(model_path, out_dir, args.episodes, save_csv=args.save_csv, policy=args.policy)
+            sweep_uncertainties(model_path, out_dir, args.episodes, save_csv=args.save_csv, policy=args.policy, workers=args.workers)
         if args.mode in ['heatmap', 'all']:
             model = SAC.load(model_path) if args.policy == "sac" else None
             generate_heatmap(model, out_dir, args.episodes, policy=args.policy)
