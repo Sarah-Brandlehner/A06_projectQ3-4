@@ -29,6 +29,8 @@ Commands (Modes):
     plot-airspace          Plot airspace sweep from a CSV file
     plot-density           Plot density sweep from a CSV file
     plot-uncertainty       Plot uncertainty ablation from a CSV file
+    plot-airspace-compare  Plot airspace sweep comparing SAC and MVP
+    plot-density-compare   Plot density sweep comparing SAC and MVP
 
 Options:
     --run-dir              Path to run directory containing best_model/best_model.zip
@@ -36,11 +38,13 @@ Options:
     --incremental-dir      Tensorboard log dir for stepwise training (Hypothesis E)
     --baseline-dir         Tensorboard log dir for baseline training (Hypothesis E)
     --baseline-model       Path to baseline model dir (e.g. Adam's 30-dim obs model)
+    --policy               Policy to use: 'sac' or 'mvp' (default: sac)
     --save-csv             Save evaluation metrics to CSV files
     --csv-path             Path to the CSV file to plot from (for plot-* modes)
 
 Examples:
     python evaluate_hypotheses.py all --run-dir results/my_run --episodes 50 --save-csv
+    python evaluate_hypotheses.py density-sweep --run-dir results/my_run --policy mvp --save-csv
     python evaluate_hypotheses.py plot-airspace --csv-path results/my_run/hypotheses_plots/airspace_sweep.csv
     python evaluate_hypotheses.py reward-progress --incremental-dir results/inc_logs --baseline-dir results/base_logs
 """
@@ -51,6 +55,17 @@ ACTION_FREQUENCY = 5
 INTRUDER_DIST_NORM = 50000.0
 INTRUDER_POS_NORM = 13000.0
 TARGET_DIST_NORM = 200000.0
+
+import atcenv.mvp_resolver as _mvp_improved
+import atcenv.mvp_resolver_v0 as _mvp_original
+
+_MVP_VERSION = "improved"
+
+def mvp_actions_for_env(env):
+    if _MVP_VERSION == "original":
+        return _mvp_original.mvp_actions_for_env(env)
+    return _mvp_improved.mvp_actions_for_env(env)
+
 
 def normalize_obs_standard(raw_obs):
     """
@@ -84,7 +99,7 @@ def normalize_obs_standard(raw_obs):
 
     return np.clip(obs, -1.0, 1.0).astype(np.float32)
 
-def run_episode(model, env_kwargs, num_flights=10, norm_fn=None):
+def run_episode(model, env_kwargs, num_flights=10, norm_fn=None, policy="sac"):
     """
     Measures drift once per decision step to prevent inflated metrics.
     """
@@ -112,11 +127,16 @@ def run_episode(model, env_kwargs, num_flights=10, norm_fn=None):
         if len(raw_obs_list) != len(active_indices):
             break
 
-        for idx, agent_num in enumerate(active_indices):
-            # Use standard normalizer
-            obs = norm_fn(raw_obs_list[idx])
-            action, _ = model.predict(obs, deterministic=True)
-            current_actions[agent_num] = action
+        if policy == "mvp":
+            mvp_actions = mvp_actions_for_env(env)
+            for idx, agent_num in enumerate(active_indices):
+                current_actions[agent_num] = mvp_actions[idx]
+        else:
+            for idx, agent_num in enumerate(active_indices):
+                # Use standard normalizer
+                obs = norm_fn(raw_obs_list[idx])
+                action, _ = model.predict(obs, deterministic=True)
+                current_actions[agent_num] = action
 
         # 2. Step the environment ACTION_FREQUENCY times
         for sub_step in range(ACTION_FREQUENCY):
@@ -165,18 +185,18 @@ def run_episode(model, env_kwargs, num_flights=10, norm_fn=None):
     # Return episode-level fail-safe flags
     return had_conflict, had_intrusion, targets_reached, cumulative_drift / max(1, decision_steps)
 
-def eval_worker(model_path, env_kwargs, num_flights, episodes):
+def eval_worker(model_path, env_kwargs, num_flights, episodes, policy="sac"):
     """Worker function to run a full parameter condition internally so it isn't bottlenecked."""
     import os
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'  # Suppress TF warnings in workers
     from stable_baselines3 import SAC
-    model = SAC.load(model_path)
+    model = SAC.load(model_path) if policy == "sac" else None
     
     conflict_episodes = []
     intrusion_episodes = []
     drifts = []
     for _ in range(episodes):
-        had_conflict, had_intrusion, _, d = run_episode(model, env_kwargs, num_flights, norm_fn=normalize_obs_standard)
+        had_conflict, had_intrusion, _, d = run_episode(model, env_kwargs, num_flights, norm_fn=normalize_obs_standard, policy=policy)
         conflict_episodes.append(had_conflict)
         intrusion_episodes.append(had_intrusion)
         drifts.append(d)
@@ -246,7 +266,103 @@ def plot_airspace_sweep(csv_path, out_dir):
     plt.close()
     print("Saved airspace_sweep.png")
 
-def sweep_airspace(model_path, out_dir, episodes, default_flights=10, save_csv=False):
+
+def plot_airspace_compare(csv_sac, csv_mvp, out_dir):
+    import pandas as pd
+    import re
+    
+    # helper to process
+    def get_data(csv_path, metric):
+        df = pd.read_csv(csv_path)
+        ratios, fail_rates, ci = [], [], []
+        cols = df.columns
+        ratio_strs = set()
+        for c in cols:
+            m = re.match(r'Ratio_([0-9.]+)_' + metric, c)
+            if m: ratio_strs.add(m.group(1))
+        for r_str in sorted(list(ratio_strs), key=float):
+            ratios.append(float(r_str))
+            data = df[f"Ratio_{r_str}_{metric}"].dropna().values
+            N = len(data)
+            fail_rates.append(np.mean(data) * 100)
+            ci.append(1.96 * (np.std(data, ddof=1) * 100) / np.sqrt(N) if N > 1 else 0)
+        return ratios, np.array(fail_rates), np.array(ci)
+
+    for metric, fname_suffix, ylabel in [("Conflicts", "conflicts", "Episodes w/ Conflict (%)"), 
+                                         ("Intrusions", "intrusions", "Episodes w/ Intrusion (%)")]:
+        r_sac, f_sac, ci_sac = get_data(csv_sac, metric)
+        r_mvp, f_mvp, ci_mvp = get_data(csv_mvp, metric)
+        
+        fig, ax1 = plt.subplots(figsize=(10, 6))
+        ax1.set_xlabel('Restricted Airspace Ratio')
+        ax1.set_ylabel(ylabel)
+        
+        # Plot MVP first (orange, dashed, square)
+        ax1.plot(r_mvp, f_mvp, color='tab:orange', marker='s', linewidth=1.5, linestyle='--', label='MVP', markersize=7, markerfacecolor='none')
+        ax1.fill_between(r_mvp, np.maximum(0, f_mvp - ci_mvp), f_mvp + ci_mvp, color='tab:orange', alpha=0.15)
+        
+        # Plot SAC (blue, solid, circle)
+        ax1.plot(r_sac, f_sac, color='tab:blue', marker='o', linewidth=1.5, label='SAC', markersize=5)
+        ax1.fill_between(r_sac, np.maximum(0, f_sac - ci_sac), f_sac + ci_sac, color='tab:blue', alpha=0.15)
+        
+        ax1.axvline(x=0.20, color='gray', linestyle=':', label='Training Environment Area (20%)')
+        
+        ax1.grid(True, alpha=0.3, linestyle='--')
+        ax1.legend(loc='upper left')
+        
+        fig.tight_layout()
+        filename = f"airspace_sweep_compare_{fname_suffix}.png"
+        plt.savefig(os.path.join(out_dir, filename), dpi=200, bbox_inches='tight')
+        plt.close()
+        print(f"Saved {filename}")
+
+def plot_density_compare(csv_sac, csv_mvp, out_dir):
+    import pandas as pd
+    import re
+    
+    def get_data(csv_path, metric):
+        df = pd.read_csv(csv_path)
+        densities, fail_rates, ci = [], [], []
+        cols = df.columns
+        dens_strs = set()
+        for c in cols:
+            m = re.match(r'Density_([0-9]+)_' + metric, c)
+            if m: dens_strs.add(m.group(1))
+        for d_str in sorted([int(d) for d in dens_strs]):
+            densities.append(d_str)
+            data = df[f"Density_{d_str}_{metric}"].dropna().values
+            N = len(data)
+            fail_rates.append(np.mean(data) * 100)
+            ci.append(1.96 * (np.std(data, ddof=1) * 100) / np.sqrt(N) if N > 1 else 0)
+        return densities, np.array(fail_rates), np.array(ci)
+
+    for metric, fname_suffix, ylabel in [("Conflicts", "conflicts", "Episodes w/ Conflict (%)"), 
+                                         ("Intrusions", "intrusions", "Episodes w/ Intrusion (%)")]:
+        r_sac, f_sac, ci_sac = get_data(csv_sac, metric)
+        r_mvp, f_mvp, ci_mvp = get_data(csv_mvp, metric)
+        
+        fig, ax1 = plt.subplots(figsize=(10, 6))
+        ax1.set_xlabel('Traffic Density (Number of Aircraft)')
+        ax1.set_ylabel(ylabel)
+        
+        ax1.plot(r_mvp, f_mvp, color='tab:orange', marker='s', linewidth=1.5, linestyle='--', label='MVP', markersize=7, markerfacecolor='none')
+        ax1.fill_between(r_mvp, np.maximum(0, f_mvp - ci_mvp), f_mvp + ci_mvp, color='tab:orange', alpha=0.15)
+        
+        ax1.plot(r_sac, f_sac, color='tab:blue', marker='o', linewidth=1.5, label='SAC', markersize=5)
+        ax1.fill_between(r_sac, np.maximum(0, f_sac - ci_sac), f_sac + ci_sac, color='tab:blue', alpha=0.15)
+        
+        ax1.axvline(x=10, color='gray', linestyle=':', label='Training Environment Area (10 Flights)')
+        
+        ax1.grid(True, alpha=0.3, linestyle='--')
+        ax1.legend(loc='upper left')
+        
+        fig.tight_layout()
+        filename = f"density_sweep_compare_{fname_suffix}.png"
+        plt.savefig(os.path.join(out_dir, filename), dpi=200, bbox_inches='tight')
+        plt.close()
+        print(f"Saved {filename}")
+
+def sweep_airspace(model_path, out_dir, episodes, default_flights=10, save_csv=False, policy="sac"):
     print("Running Airspace Area Sweep (Parallelized)...")
     ratios = np.arange(0.10, 0.525, 0.025)
     
@@ -254,7 +370,7 @@ def sweep_airspace(model_path, out_dir, episodes, default_flights=10, save_csv=F
     all_intrusion_episodes = {}
 
     with ProcessPoolExecutor() as executor:
-        futures = {ratio: executor.submit(eval_worker, model_path, {'restricted_area_ratio': ratio}, default_flights, episodes) for ratio in ratios}
+        futures = {ratio: executor.submit(eval_worker, model_path, {'restricted_area_ratio': ratio}, default_flights, episodes, policy) for ratio in ratios}
 
         for ratio, future in tqdm(futures.items(), desc="Airspace Sweep"):
             conflict_episodes, intrusion_episodes, _ = future.result()
@@ -269,7 +385,7 @@ def sweep_airspace(model_path, out_dir, episodes, default_flights=10, save_csv=F
             data[f"Ratio_{ratio:.3f}_Intrusions"] = all_intrusion_episodes[ratio]
         
         df = pd.DataFrame(data)
-        csv_path = os.path.join(out_dir, "airspace_sweep.csv")
+        csv_path = os.path.join(out_dir, f"airspace_sweep_{policy}.csv")
         df.to_csv(csv_path, index=False)
         print(f"Saved airspace sweep metrics to {csv_path}")
         plot_airspace_sweep(csv_path, out_dir)
@@ -281,7 +397,7 @@ def sweep_airspace(model_path, out_dir, episodes, default_flights=10, save_csv=F
             data[f"Ratio_{ratio:.3f}_Conflicts"] = all_conflict_episodes[ratio]
             data[f"Ratio_{ratio:.3f}_Intrusions"] = all_intrusion_episodes[ratio]
         df = pd.DataFrame(data)
-        csv_path = os.path.join(out_dir, "temp_airspace_sweep.csv")
+        csv_path = os.path.join(out_dir, f"temp_airspace_sweep_{policy}.csv")
         df.to_csv(csv_path, index=False)
         plot_airspace_sweep(csv_path, out_dir)
         os.remove(csv_path)
@@ -348,7 +464,7 @@ def plot_density_sweep(csv_path, out_dir):
     print("Saved density_sweep.png")
 
 
-def sweep_density(model_path, out_dir, episodes, save_csv=False):
+def sweep_density(model_path, out_dir, episodes, save_csv=False, policy="sac"):
     print("Running Density Sweep (Parallelized)...")
     densities = np.arange(10, 31, 1) 
     
@@ -357,7 +473,7 @@ def sweep_density(model_path, out_dir, episodes, save_csv=False):
 
     with ProcessPoolExecutor() as executor:
         # Pass a smaller distance_init_buffer (2.0) and enable relaxation to allow aircraft to fit at high densities
-        futures = {d: executor.submit(eval_worker, model_path, {'distance_init_buffer': 2.0, 'enable_spawn_relaxation': True}, d, episodes) for d in densities}
+        futures = {d: executor.submit(eval_worker, model_path, {'distance_init_buffer': 2.0, 'enable_spawn_relaxation': True}, d, episodes, policy) for d in densities}
 
         for d, future in tqdm(futures.items(), desc="Density Sweep"):
             conflict_episodes, intrusion_episodes, drift_arr = future.result()
@@ -371,7 +487,7 @@ def sweep_density(model_path, out_dir, episodes, save_csv=False):
             data[f"Density_{d}_Conflicts"] = all_conflict_episodes[d]
             data[f"Density_{d}_Intrusions"] = all_intrusion_episodes[d]
         df = pd.DataFrame(data)
-        csv_path = os.path.join(out_dir, "density_sweep.csv")
+        csv_path = os.path.join(out_dir, f"density_sweep_{policy}.csv")
         df.to_csv(csv_path, index=False)
         print(f"Saved density sweep metrics to {csv_path}")
         plot_density_sweep(csv_path, out_dir)
@@ -382,7 +498,7 @@ def sweep_density(model_path, out_dir, episodes, save_csv=False):
             data[f"Density_{d}_Conflicts"] = all_conflict_episodes[d]
             data[f"Density_{d}_Intrusions"] = all_intrusion_episodes[d]
         df = pd.DataFrame(data)
-        csv_path = os.path.join(out_dir, "temp_density_sweep.csv")
+        csv_path = os.path.join(out_dir, f"temp_density_sweep_{policy}.csv")
         df.to_csv(csv_path, index=False)
         plot_density_sweep(csv_path, out_dir)
         os.remove(csv_path)
@@ -437,7 +553,7 @@ def plot_uncertainties_sweep(csv_path, out_dir):
     plt.close()
     print("Saved uncertainty_ablation.png")
 
-def sweep_uncertainties(model_path, out_dir, episodes, default_flights=10, save_csv=False):
+def sweep_uncertainties(model_path, out_dir, episodes, default_flights=10, save_csv=False, policy="sac"):
     print("Running Uncertainty Ablation Sweep (Parallelized)...")
     experiments = [
         ("Base (Ideal)", {}),
@@ -451,7 +567,7 @@ def sweep_uncertainties(model_path, out_dir, episodes, default_flights=10, save_
     all_intrusion_episodes = {}
 
     with ProcessPoolExecutor() as executor:
-        futures = {name: executor.submit(eval_worker, model_path, config, default_flights, episodes) for name, config in experiments}
+        futures = {name: executor.submit(eval_worker, model_path, config, default_flights, episodes, policy) for name, config in experiments}
 
         for name, future in tqdm(futures.items(), desc="Uncertainty Ablation"):
             cfs_list, ifs_list, _ = future.result()
@@ -465,7 +581,7 @@ def sweep_uncertainties(model_path, out_dir, episodes, default_flights=10, save_
             data[f"Condition_{name}_Conflicts"] = all_conflict_episodes[name]
             data[f"Condition_{name}_Intrusions"] = all_intrusion_episodes[name]
         df = pd.DataFrame(data)
-        csv_path = os.path.join(out_dir, "uncertainty_ablation.csv")
+        csv_path = os.path.join(out_dir, f"uncertainty_ablation_{policy}.csv")
         df.to_csv(csv_path, index=False)
         print(f"Saved uncertainty ablation metrics to {csv_path}")
         plot_uncertainties_sweep(csv_path, out_dir)
@@ -476,12 +592,12 @@ def sweep_uncertainties(model_path, out_dir, episodes, default_flights=10, save_
             data[f"Condition_{name}_Conflicts"] = all_conflict_episodes[name]
             data[f"Condition_{name}_Intrusions"] = all_intrusion_episodes[name]
         df = pd.DataFrame(data)
-        csv_path = os.path.join(out_dir, "temp_uncertainty_ablation.csv")
+        csv_path = os.path.join(out_dir, f"temp_uncertainty_ablation_{policy}.csv")
         df.to_csv(csv_path, index=False)
         plot_uncertainties_sweep(csv_path, out_dir)
         os.remove(csv_path)
 
-def generate_heatmap(model, out_dir, episodes, default_flights=10):
+def generate_heatmap(model, out_dir, episodes, default_flights=10, policy="sac"):
     """
     Generate Heatmap with fixed geometry and target-facing initialization.
     Aircraft start facing their targets to match training behavior.
@@ -530,10 +646,15 @@ def generate_heatmap(model, out_dir, episodes, default_flights=10):
                 break
             
             actions = {}
-            for idx, agent_num in enumerate(active):
-                obs = normalize_obs_standard(raw_obs_list[idx])
-                act, _ = model.predict(obs, deterministic=True)
-                actions[agent_num] = act
+            if policy == "mvp":
+                mvp_actions = mvp_actions_for_env(env)
+                for idx, agent_num in enumerate(active):
+                    actions[agent_num] = mvp_actions[idx]
+            else:
+                for idx, agent_num in enumerate(active):
+                    obs = normalize_obs_standard(raw_obs_list[idx])
+                    act, _ = model.predict(obs, deterministic=True)
+                    actions[agent_num] = act
 
             for sub_step in range(ACTION_FREQUENCY):
                 now = [i for i in range(default_flights) if i not in env.done]
@@ -630,7 +751,7 @@ def plot_reward_progress(incremental_dir, baseline_dir, out_dir):
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
-    parser.add_argument('mode', choices=['airspace-sweep', 'density-sweep', 'uncertainty-ablation', 'reward-progress', 'heatmap', 'all', 'plot-airspace', 'plot-density', 'plot-uncertainty'])
+    parser.add_argument('mode', choices=['airspace-sweep', 'density-sweep', 'uncertainty-ablation', 'reward-progress', 'heatmap', 'all', 'plot-airspace', 'plot-density', 'plot-uncertainty', 'plot-airspace-compare', 'plot-density-compare'])
     parser.add_argument('--run-dir', required=False, help="Path to run directory containing best_model/best_model.zip")
     parser.add_argument('--episodes', default=100, type=int, help="Number of episodes to run per condition")
     parser.add_argument('--incremental-dir', default=None, help="Tensorboard log dir for stepwise training (Hypothesis E)")
@@ -638,6 +759,9 @@ if __name__ == '__main__':
     parser.add_argument('--baseline-model', default=None, help="Path to baseline model dir (e.g. Adam's 30-dim obs model)")
     parser.add_argument('--save-csv', action='store_true', help="Save evaluation metrics to CSV files.")
     parser.add_argument('--csv-path', default=None, help="Path to the CSV file to plot from (for plot-* modes)")
+    parser.add_argument('--csv-sac', default=None, help="Path to the SAC CSV file for comparison modes")
+    parser.add_argument('--csv-mvp', default=None, help="Path to the MVP CSV file for comparison modes")
+    parser.add_argument('--policy', default='sac', choices=['sac', 'mvp'], help="Policy to evaluate (sac or mvp)")
     args = parser.parse_args()
     
     # Set academic plot defaults
@@ -670,6 +794,20 @@ if __name__ == '__main__':
         elif args.mode == 'reward-progress':
             print("Error: Must provide --incremental-dir and --baseline-dir for this plot.")
             
+
+    if args.mode == 'plot-airspace-compare':
+        if not args.csv_sac or not args.csv_mvp:
+            print("Error: plot-airspace-compare requires --csv-sac and --csv-mvp")
+            exit(1)
+        plot_airspace_compare(args.csv_sac, args.csv_mvp, out_dir)
+        exit(0)
+    elif args.mode == 'plot-density-compare':
+        if not args.csv_sac or not args.csv_mvp:
+            print("Error: plot-density-compare requires --csv-sac and --csv-mvp")
+            exit(1)
+        plot_density_compare(args.csv_sac, args.csv_mvp, out_dir)
+        exit(0)
+
     if args.mode in ['airspace-sweep', 'density-sweep', 'uncertainty-ablation', 'heatmap', 'all']:
         # Determine which model to use
         if args.baseline_model:
@@ -685,18 +823,18 @@ if __name__ == '__main__':
             model_path = os.path.join(run_dir, "sac_atc_final.zip")
             
         print(f"Loading model from {model_path}")
-        model = SAC.load(model_path)
+        model = SAC.load(model_path) if args.policy == "sac" else None
         
         if out_dir == "results/hypotheses_plots" and args.baseline_model:
             out_dir = os.path.join(run_dir, "hypotheses_plots")
             os.makedirs(out_dir, exist_ok=True)
         
         if args.mode in ['airspace-sweep', 'all']:
-            sweep_airspace(model_path, out_dir, args.episodes, save_csv=args.save_csv)
+            sweep_airspace(model_path, out_dir, args.episodes, save_csv=args.save_csv, policy=args.policy)
         if args.mode in ['density-sweep', 'all']:
-            sweep_density(model_path, out_dir, args.episodes, save_csv=args.save_csv)
+            sweep_density(model_path, out_dir, args.episodes, save_csv=args.save_csv, policy=args.policy)
         if args.mode in ['uncertainty-ablation', 'all']:
-            sweep_uncertainties(model_path, out_dir, args.episodes, save_csv=args.save_csv)
+            sweep_uncertainties(model_path, out_dir, args.episodes, save_csv=args.save_csv, policy=args.policy)
         if args.mode in ['heatmap', 'all']:
-            model = SAC.load(model_path)
-            generate_heatmap(model, out_dir, args.episodes)
+            model = SAC.load(model_path) if args.policy == "sac" else None
+            generate_heatmap(model, out_dir, args.episodes, policy=args.policy)

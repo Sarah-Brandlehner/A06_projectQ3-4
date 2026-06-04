@@ -46,7 +46,7 @@ class RewardBreakdownCallback(BaseCallback):
     def __init__(self, log_freq: int = 500, window: int = 200, verbose: int = 0):
         super().__init__(verbose)
         self.log_freq = log_freq
-        self._component_names = ["drift", "conflict", "alert", "target"]
+        self._component_names = ["drift", "conflict", "target"]
         self._buffers = {name: deque(maxlen=window) for name in self._component_names}
 
     def _on_step(self) -> bool:

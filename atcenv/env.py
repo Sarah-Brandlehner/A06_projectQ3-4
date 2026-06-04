@@ -53,6 +53,7 @@ class Environment(gym.Env):
                  distance_init_buffer: Optional[float] = 5.,
                  random_init_heading: bool = True,
                  enable_spawn_relaxation: bool = False,
+                 restricted_scale_factor: Optional[float] = None,
                  render_mode: bool = False,
                  **kwargs):
         """
@@ -69,6 +70,7 @@ class Environment(gym.Env):
         self.distance_init_buffer = distance_init_buffer
         self.random_init_heading = random_init_heading
         self.enable_spawn_relaxation = enable_spawn_relaxation
+        self.restricted_scale_factor = restricted_scale_factor
         self.dt = dt
 
         # tolerance to consider that the target has been reached (in meters)
@@ -133,7 +135,6 @@ class Environment(gym.Env):
         return {
             "drift":     self.drift_penalties() * 0.2,
             "conflict":  self.conflict_penalties() * -40,
-            "alert":     self.alert_penalties() * 0.0,
             "target":    self.reachedTarget() * 0.0,
         }
 
@@ -168,88 +169,6 @@ class Environment(gym.Env):
                 drift[i]  = 0.5 - (abs(f.drift)**1.5)
         return drift
     
-    def restricted_airspace_penalties(self):
-        """
-        Check if each flight is in restricted airspace and return penalty flag
-        """
-        penalties = np.zeros(self.num_flights)
-        for i, f in enumerate(self.flights):
-            if i not in self.done and self.restricted_airspace and f.in_restricted_airspace(self.restricted_airspace):
-                penalties[i] = 1
-        return penalties
-    
-    def heading_into_restricted_penalties(self):
-        """
-        Check if each flight's heading vector points into restricted airspace and return penalty flag
-        """
-        penalties = np.zeros(self.num_flights)
-        for i, f in enumerate(self.flights):
-            if i not in self.done and self.restricted_airspace and f.heading_into_restricted_airspace(self.restricted_airspace):
-                penalties[i] = 1
-        return penalties
-
-    def alert_penalties(self):
-        """Penalty for predicted conflicts within 2 minutes.
-        Uses Closest Point of Approach (CPA) between each active pair."""
-        penalties = np.zeros(self.num_flights)
-        active = [i for i in range(self.num_flights) if i not in self.done]
-        if len(active) < 2:
-            return penalties
-
-        for idx_a in range(len(active)):
-            i = active[idx_a]
-            fi = self.flights[i]
-            dxi, dyi = fi.components
-            for idx_b in range(idx_a + 1, len(active)):
-                j = active[idx_b]
-                fj = self.flights[j]
-                dxj, dyj = fj.components
-
-                # Relative position and velocity
-                rx = fi.position.x - fj.position.x
-                ry = fi.position.y - fj.position.y
-                vx = dxi - dxj
-                vy = dyi - dyj
-
-                # Time to CPA
-                v_sq = vx * vx + vy * vy
-                if v_sq < 1e-6:
-                    continue
-                t_cpa = -(rx * vx + ry * vy) / v_sq
-                if t_cpa < 0 or t_cpa > 120:  # within 2 minutes only
-                    continue
-
-                # Distance at CPA
-                d_cpa = math.hypot(rx + vx * t_cpa, ry + vy * t_cpa)
-                if d_cpa < self.min_distance:
-                    penalties[i] += 1
-                    penalties[j] += 1
-
-        return penalties
-
-    def proximity_penalties(self):
-        """Smooth penalty that increases as aircraft get closer to separation minimum."""
-        penalties = np.zeros(self.num_flights)
-        active = [i for i in range(self.num_flights) if i not in self.done]
-        if len(active) < 2:
-            return penalties
-        
-        positions = np.array([[self.flights[i].position.x, self.flights[i].position.y] for i in active])
-        for idx_a, i in enumerate(active):
-            for idx_b, j in enumerate(active):
-                if i >= j:
-                    continue
-                dist = np.hypot(positions[idx_a, 0] - positions[idx_b, 0],
-                            positions[idx_a, 1] - positions[idx_b, 1])
-                # Penalty ramps up as distance approaches min_distance
-                # Zero penalty beyond 2x separation minimum
-                threshold = self.min_distance * 2.0
-                if dist < threshold:
-                    # Linear ramp: 0 at threshold, 1 at min_distance
-                    penalty = max(0, (threshold - dist) / (threshold - self.min_distance))
-                    penalties[i] += penalty
-                    penalties[j] += penalty
-        return penalties
     def restricted_airspace_penalties(self):
         """
         Check if each flight is in restricted airspace and return penalty flag
@@ -463,7 +382,12 @@ class Environment(gym.Env):
 
     def reset(self, number_flights_training) -> List:
         self.airspace = Airspace.random(self.min_area, self.max_area)
-        self.restricted_airspace = RestrictedAirspace.random(self.min_area, self.max_area)
+        if getattr(self, 'restricted_scale_factor', None) is not None:
+            self.restricted_airspace = RestrictedAirspace.random(
+                self.min_area, self.max_area,
+                scale_factor=self.restricted_scale_factor)
+        else:
+            self.restricted_airspace = RestrictedAirspace.random(self.min_area, self.max_area)
         self.num_flights = number_flights_training
         self.flights = []
         tol = self.distance_init_buffer * self.tol
