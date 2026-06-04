@@ -54,13 +54,10 @@ TARGET_DIST_NORM = 200000.0
 
 
 import atcenv.mvp_resolver as _mvp_improved
-import atcenv.mvp_resolver_v0 as _mvp_original
 
 _MVP_VERSION = "improved"
 
 def mvp_actions_for_env(env):
-    if _MVP_VERSION == "original":
-        return _mvp_original.mvp_actions_for_env(env)
     return _mvp_improved.mvp_actions_for_env(env)
 
 def _load_policy(policy, model_path):

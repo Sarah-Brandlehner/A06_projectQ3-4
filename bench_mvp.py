@@ -27,10 +27,7 @@ from atcenv.sb3_wrapper import ACTION_FREQUENCY
 
 
 def _get_resolver(version):
-    if version == "original":
-        from atcenv.mvp_resolver_v0 import mvp_actions_for_env
-    else:
-        from atcenv.mvp_resolver import mvp_actions_for_env
+    from atcenv.mvp_resolver import mvp_actions_for_env
     return mvp_actions_for_env
 
 
@@ -105,8 +102,8 @@ def main():
     p.add_argument("--workers", type=int, default=max(1, (os.cpu_count() or 2) // 2))
     p.add_argument("--seed-base", type=int, default=20260430)
     p.add_argument("--tag", type=str, default="MVP")
-    p.add_argument("--resolver", type=str, default="improved", choices=["improved", "original"],
-                   help="'improved' = v4 (path-bias + bug fixes), 'original' = v0 baseline")
+    p.add_argument("--resolver", type=str, default="improved", choices=["improved"],
+                   help="'improved' = v4 (path-bias + bug fixes)")
     args = p.parse_args()
 
     seeds = [args.seed_base + ep for ep in range(args.episodes)]
