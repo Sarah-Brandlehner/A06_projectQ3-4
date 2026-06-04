@@ -2,7 +2,7 @@
 
 This repository contains the codebase for training, evaluating, and visualizing a Reinforcement Learning (RL) model for Air Traffic Control (ATC) conflict resolution. It uses Soft Actor-Critic (SAC) to navigate aircraft to their targets while avoiding conflicts with other aircraft and restricted airspaces. 
 
-**Acknowledgments:** This project is built upon the [BlueSky gym simulation environment](https://github.com/TUDelft-UPG/bluesky).
+**Acknowledgments:** This project is built upon the [atcenv simulation environment by ramondalmau](https://github.com/ramondalmau/atcenv/tree/main).
 
 It also includes a geometric solver (MVP resolver) that acts as a baseline for comparison.
 
