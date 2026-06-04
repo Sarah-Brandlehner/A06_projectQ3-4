@@ -147,6 +147,7 @@ cython_debug/
 
 # Results
 results/*
+!results/thisonLite/
 
 tmp/*
 rewards.csv

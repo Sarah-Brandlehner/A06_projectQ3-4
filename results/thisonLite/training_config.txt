@@ -1,0 +1,38 @@
+Training Configuration
+==================================================
+Date: 2026-04-29 16:23:15
+Run name: thisone
+
+--- Training Parameters ---
+Mode:            ALL AGENTS (Deploy-all)
+Timesteps:       5000000
+Num flights:     10
+Num envs:        16
+Algorithm:       SAC (MlpPolicy)
+Learning rate:   1e-3
+Buffer size:     100,000
+Batch size:      256
+Gamma:           0.99
+Tau:             0.005
+Train freq:      8
+Gradient steps:  8
+Entropy coeff:   auto
+
+--- Observation Normalization ---
+Intruder distance center: 50000.0 m
+Intruder distance scale:  15000.0 m
+Intruder position scale:  13000.0 m
+Target distance scale:    200000.0 m
+Speed center:             230.0 m/s
+Speed scale:              30.0 m/s
+Observation size:         30
+Action frequency:         5
+
+--- Reward Function ---
+  drifts = self.drift_penalties() * 0.7
+  conflicts = self.conflict_penalties() * -50.0
+  return drifts + conflicts + restricted_penalties
+
+--- Heading / Speed Limits ---
+Max heading change:  22.5 deg per action
+Speed change:        (max_speed - min_speed) / 10 per action
