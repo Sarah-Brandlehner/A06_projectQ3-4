@@ -22,7 +22,7 @@ import atcenv.env as _env_mod
 _env_mod.Environment.render = lambda self: None
 
 from atcenv.env import Environment
-from atcenv.sb3_wrapper import ACTION_FREQUENCY
+from atcenv.multi_agent_wrapper import ACTION_FREQUENCY
 
 
 def _get_resolver(version):

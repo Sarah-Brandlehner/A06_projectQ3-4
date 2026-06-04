@@ -30,7 +30,7 @@ def _path_clips_polygon(poly, own_xy, target_xy, lookahead, buffer):
     dist = math.hypot(dx, dy)
     if dist < 1e-3:
         return False
-    # Cap the look-ahead at the actual distance to target so we don't check past it.
+    # Cap the look-ahead at the actual distance to target 
     look = min(lookahead, dist)
     end_x = own_xy[0] + (dx / dist) * look
     end_y = own_xy[1] + (dy / dist) * look
@@ -220,6 +220,7 @@ def mvp_resolver(
         d_cpa = math.hypot(cpa_rx, cpa_ry)  # predicted separation at CPA
 
         # Threat evaluation
+        cpa_threat = (t_cpa > 0.0) and (t_cpa < lookahead) and (d_cpa < min_dist)
         prox_threat = cur_dist < proximity_zone
         if not (cpa_threat or prox_threat):
             continue  # no threat from this intruder
