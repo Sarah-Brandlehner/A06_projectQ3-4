@@ -32,6 +32,7 @@ Options:
 
 Example:
     python visualize.py evaluate --run-dir results/my_run --workers 8 --episodes 100
+    python visualize.py evaluate-dist --run-dir results/my_run --workers 8 --episodes 100
     python visualize.py plot-compare --csv-path results/my_run/plots/checkpoint_comparison.csv
 """
 import argparse
