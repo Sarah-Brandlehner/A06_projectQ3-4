@@ -23,34 +23,34 @@ It also includes a geometric solver (MVP resolver) that acts as a baseline for c
 - **Logs:** When training, progress is logged in the `results/<model_name>/eval_logs/` folder. For the default `thisonLite` baseline model, this folder is intentionally empty as the model is already fully trained. It will fill up if you start a new training run.
 
 ### 1. Training a Model
-To train a new SAC model, run:
+To train a new SAC model and specify a custom name for the output folder, run:
 ```bash
-python train_sac.py --timesteps 500000 --num-flights 10 --num-envs 4
+python train_sac.py --timesteps 500000 --num-flights 10 --num-envs 4 --run-name "my_experiment"
 ```
 
 ### 2. Evaluating a Model
-To simply evaluate the default model and see basic metrics:
+To evaluate a trained model (like the included baseline) and visualize the flights with PyGame:
 ```bash
-python evaluate.py --episodes 10 --num-flights 5
+python evaluate.py --model results/thisonLite/best_model/best_model.zip --episodes 10 --num-flights 5 --render
 ```
 
 ### 3. Hypothesis Testing & Sweeps
-Run evaluation sweeps to test specific hypotheses. The data is saved to CSV and automatically plotted:
+Run evaluation sweeps to test specific hypotheses. You must specify the run directory of the model you want to evaluate. The data is saved to CSV and automatically plotted:
 ```bash
-python evaluate_hypotheses.py density-sweep --episodes 100 --save-csv
-python evaluate_hypotheses.py airspace-sweep --episodes 100 --save-csv
-python evaluate_hypotheses.py uncertainty-ablation --episodes 100 --save-csv
+python evaluate_hypotheses.py density-sweep --run-dir results/thisonLite --episodes 100 --workers 4 --save-csv
+python evaluate_hypotheses.py airspace-sweep --run-dir results/thisonLite --episodes 100 --workers 4 --save-csv
+python evaluate_hypotheses.py uncertainty-ablation --run-dir results/thisonLite --episodes 100 --workers 4 --save-csv
 ```
 
 ### 4. Visualization
-Generate trajectory maps or training curves:
+Generate trajectory maps or plot training curves from a specific run directory:
 ```bash
-python visualize.py trajectory --episodes 1 --num-flights 10
-python visualize.py training
+python visualize.py trajectory --run-dir results/thisonLite --episodes 1 --num-flights 10
+python visualize.py training --run-dir results/my_experiment
 ```
 
 ### 5. Benchmarking the MVP Baseline
-To test the geometric MVP resolver instead of the RL model:
+To test the geometric MVP resolver instead of the RL model using parallel processing:
 ```bash
-python bench_mvp.py --episodes 100 --num-flights 10
+python bench_mvp.py --episodes 100 --num-flights 10 --workers 4
 ```
