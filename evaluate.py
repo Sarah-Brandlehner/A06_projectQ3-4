@@ -135,7 +135,7 @@ def evaluate_all_agents(model_path: str, n_episodes: int = 10, num_flights: int 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Evaluate trained ATC model")
-    parser.add_argument("--model", type=str, required=True, help="Path to trained model .zip")
+    parser.add_argument("--model", type=str, default="results/thisonLite/best_model/best_model.zip", help="Path to trained model .zip")
     parser.add_argument("--episodes", type=int, default=10)
     parser.add_argument("--num-flights", type=int, default=5)
     parser.add_argument("--random-heading", action="store_true", help="Enable random initial headings (default is deactivated)")

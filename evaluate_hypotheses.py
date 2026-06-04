@@ -752,7 +752,7 @@ def plot_reward_progress(incremental_dir, baseline_dir, out_dir):
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('mode', choices=['airspace-sweep', 'density-sweep', 'uncertainty-ablation', 'reward-progress', 'heatmap', 'all', 'plot-airspace', 'plot-density', 'plot-uncertainty', 'plot-airspace-compare', 'plot-density-compare'])
-    parser.add_argument('--run-dir', required=False, help="Path to run directory containing best_model/best_model.zip")
+    parser.add_argument('--run-dir', required=False, default="results/thisonLite", help="Path to run directory containing best_model/best_model.zip")
     parser.add_argument('--episodes', default=100, type=int, help="Number of episodes to run per condition")
     parser.add_argument('--incremental-dir', default=None, help="Tensorboard log dir for stepwise training (Hypothesis E)")
     parser.add_argument('--baseline-dir', default=None, help="Tensorboard log dir for baseline training (Hypothesis E)")
