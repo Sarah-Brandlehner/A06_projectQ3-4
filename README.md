@@ -22,6 +22,10 @@ To train a new SAC model, run:
 python train_sac.py --timesteps 500000 --num-flights 10 --num-envs 4
 ```
 
+*Note on Multicore Processing*: The `--num-envs` parameter specifies how many parallel environments to run simultaneously. Set this to a maximum of the number of CPU cores available on your machine.
+
+*Note on Logs*: When training, progress is logged in the `results/<model_name>/eval_logs/` folder. For the default `thisonLite` baseline model, this folder is intentionally empty as the model is already fully trained. It will fill up if you start a new training run.
+
 ### 2. Evaluating a Model
 To simply evaluate the default model and see basic metrics:
 ```bash
