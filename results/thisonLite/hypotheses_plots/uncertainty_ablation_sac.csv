@@ -1,0 +1,2 @@
+Condition_Base (Ideal)_Conflicts,Condition_Base (Ideal)_Intrusions,Condition_Scramble Only_Conflicts,Condition_Scramble Only_Intrusions,Condition_Wind Only_Conflicts,Condition_Wind Only_Intrusions,Condition_Delay Only_Conflicts,Condition_Delay Only_Intrusions,Condition_All Uncertainties_Conflicts,Condition_All Uncertainties_Intrusions
+False,False,False,True,True,False,False,False,False,False
