@@ -1,85 +1,50 @@
-# Conflict resolution environment
+# ATC Conflict Resolution
 
-This is the conflict resolution environment for the Challenge #2 of the EUROCONTROL Innovation Masterclass
+This repository contains the codebase for training, evaluating, and visualizing a Reinforcement Learning (RL) model for Air Traffic Control (ATC) conflict resolution. It uses Soft Actor-Critic (SAC) to navigate aircraft to their targets while avoiding conflicts with other aircraft and restricted airspaces. 
 
-## Statement of work
+It also includes a geometric solver (MVP resolver) that acts as a baseline for comparison.
 
-Artificial intelligence has been declared successful in providing decision support in a variety of real-world applications. Many of these accomplishments have been made possible by recent advancements in reinforcement learning (RL) algorithms. In short, RL algorithms can be used to discover the best strategy (policy in the machine learning jargon) for a wide range of difficult tasks simply by learning from the experiences of the agent interacting with the environment. The policy is typically a neural network that takes as input the state of the environment as observed by the agent and determines the best action to maximize the return (cumulative discounted reward).
+## Project Structure
 
-Recently, EUROCONTROL has implemented a reinforcement learning system for training Air Traffic Control (ATC) policies. The current system is composed of (1) a relatively simple ATC simulator that generates experiences, and (2) a learner based on the Proximal Policy Optimisation (PPO) algorithm that uses these experiences to continuously improve the policy. Initial results showed that the optimal policy that minimises the losses of separation and the environmental impact could be learned from scratch with RL. These promising findings encouraged us to take you on-board of this challenge!
-
-At present, however, the ATC simulator does not consider the vertical dimension (i.e., all aircraft are assumed to be at the same altitude), and consequently the policy can only learn speed and/or heading resolution actions. Furthermore, the simulator does not include uncertainty, meaning that the policy may not perform well in real-life situations, where uncertainty is inevitable. Last but not least, the PPO algorithm was not explicitly designed for multi-agent environments, and therefore other algorithms like Actor-Attention-Critic for Multi-Agent Reinforcement Learning (MAAC) or Deep Coordination Graphs (DCG) may achieve better performance.
-
-We will provide you with the skeleton of a basic 2D ATC simulator (the environment) built on the Gym framework in this challenge (in Python). You will tailor this simulator by adding:
-
-* The observation function (what do agents observe from the environment to take actions?)
-* The reward function (how are agents reward or penalised by their actions?)
-* The action space (e.g., heading change, speed change), which can be discrete or continuous 
-
-[source code of the Environment](https://github.com/ramondalmau/atcenv/blob/main/atcenv/env.py)
-
-and then you will train the optimal policy using a reinforcement learning algorithm of your choice. 
-
-We also encourage you to explore any of the following bonus tasks:
-* Implement the vertical dimension in the simulation environment
-* Implement weather in the simulator (e.g, consider the effect of wind)
-* Implement uncertainty in the simulation environment. For instance, due to measurement errors, the position observed by the agents may not perfectly correspond to the actual one, or agents may not react instantaneously to resolution actions. 
-
-The jury will consider the following factors when evaluating the solutions proposed by the various teams:
-* The performance of the policy (e.g., number of conflicts, extra distance / environmental impact, number of resolution actions)
-* The learnt policy's realism and scalability to any number of agents/flights
-* The originality and appropriateness of the approach
-* The clarity of the presentation
-* Bonus task will be positively considered as well
-
-## References
----
-[Dalmau, R. and Allard, E. "Air Traffic Control Using Message Passing Neural Networks and Multi-Agent Reinforcement Learning", 2020. 10th SESAR Innovation Days](https://www.researchgate.net/publication/352537798_Air_Traffic_Control_Using_Message_Passing_Neural_Networks_and_Multi-Agent_Reinforcement_Learning)
----
-
-## Download
-
-```bash
-git clone https://github.com/ramondalmau/atcenv.git
-```
-
-## Installation 
-
-The environment has been tested with Python 3.8 and the versions specified in the requirements.txt file
-
-```bash
-cd atcenv
-pip install -r requirements.txt
-python setup.py install
-```
+- **`train_sac.py`**: The main training script to train a new SAC policy. It uses parallel environments for faster data collection.
+- **`evaluate.py`**: Script to deploy and evaluate a trained policy.
+- **`evaluate_hypotheses.py`**: Evaluation suite for generating experimental data (e.g., density sweeps, airspace area sweeps, uncertainty ablations).
+- **`visualize.py`**: Utilities for plotting trajectories, academic evaluation graphs, and training curves.
+- **`bench_mvp.py`**: A fast, headless benchmark script specifically for evaluating the MVP baseline resolver.
+- **`atcenv/`**: Contains the custom ATC gym environment and wrappers (e.g., `env.py`, `multi_agent_wrapper.py`, `mvp_resolver.py`).
+- **`results/thisonLite/`**: Contains the pre-trained default model and evaluation logs.
 
 ## Usage
 
-```python
-from atcenv import Environment
-
-# create environment
-env = Environment()
-
-# reset the environment
-obs = env.reset()
-
-# set done status to false
-done = False
-
-# execute one episode
-while not done:
-    # compute the best action with your reinforcement learning policy
-    action = ...
-
-    # perform step
-    obs, rew, done, info = env.step(action)
-    
-    # render (only recommended in debug mode)
-    env.render()
-
-env.close()
+### 1. Training a Model
+To train a new SAC model, run:
+```bash
+python train_sac.py --timesteps 500000 --num-flights 10 --num-envs 4
 ```
 
-## License
-[MIT](https://choosealicense.com/licenses/mit/)
+### 2. Evaluating a Model
+To simply evaluate the default model and see basic metrics:
+```bash
+python evaluate.py --episodes 10 --num-flights 5
+```
+
+### 3. Hypothesis Testing & Sweeps
+Run evaluation sweeps to test specific hypotheses. The data is saved to CSV and automatically plotted:
+```bash
+python evaluate_hypotheses.py density-sweep --episodes 100 --save-csv
+python evaluate_hypotheses.py airspace-sweep --episodes 100 --save-csv
+python evaluate_hypotheses.py uncertainty-ablation --episodes 100 --save-csv
+```
+
+### 4. Visualization
+Generate trajectory maps or training curves:
+```bash
+python visualize.py trajectory --episodes 1 --num-flights 10
+python visualize.py training
+```
+
+### 5. Benchmarking the MVP Baseline
+To test the geometric MVP resolver instead of the RL model:
+```bash
+python bench_mvp.py --episodes 100 --num-flights 10
+```

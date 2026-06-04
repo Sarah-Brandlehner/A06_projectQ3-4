@@ -1,23 +1,5 @@
 """
-Modified Voltage Potential (MVP) Resolver — geometric BlueSky-style avoidance.
-
-v5 — conflict-resolution fixes:
-  * Bug fix: proximity push no longer fires for diverging pairs (t_cpa < 0).
-    Previously prox_threat fired whenever cur_dist < 2*min_dist regardless of
-    whether aircraft were closing or separating, wasting force on non-threats.
-  * Bug fix: CPA repulsion direction changed from "away from CPA separation
-    vector" to "perpendicular to relative velocity, toward safer side". This
-    is the geometrically optimal escape direction that maximises separation
-    rate with the smallest heading change.
-  * Bug fix: CPA repulsion magnitude scaled to optimal_airspeed so it can
-    actually overcome the goal force. Previous formula (dist_to_move/t_eff)
-    produced forces 5-10× smaller than the goal vector at medium range.
-  * Bug fix: goal_scale now also reacts to CPA threats regardless of current
-    distance. Previously a head-on pair 40 km apart (t_cpa~180 s) had
-    goal_scale=1.0 because cur_dist > 3*min_dist, letting the goal fight the
-    repulsion until the aircraft were already close.
-  * Retained from v4: restricted-polygon exit fix, pre-emptive path bias,
-    anti-wiggle IIR filter.
+Modified Voltage Potential (MVP) Resolver.
 """
 import math
 import numpy as np
@@ -151,8 +133,7 @@ def mvp_resolver(
     path_buffer=3500.0,
     path_bias=0.35,       # blend strength of the tangent goal override
 ):
-    # 1. ATTRACTIVE FORCE (toward target)
-    # Unit vector from current position to target, scaled to optimal airspeed.
+    # Attractive force toward target
     dx_t = flight.target.x - flight.position.x
     dy_t = flight.target.y - flight.position.y
     dist_t = math.hypot(dx_t, dy_t)
@@ -163,13 +144,7 @@ def mvp_resolver(
     goal_dx = dx_t / dist_t
     goal_dy = dy_t / dist_t
 
-    # 1b. TANGENT GOAL BIAS — pre-emptive polygon bypass at long range.
-    # If the straight-line path to target would clip the polygon (checked out to
-    # path_lookahead) and we are still outside the close-range radial push zone
-    # (> 1.1 × restricted_buffer), blend a bypass aim direction into the goal vector.
-    # This keeps the two polygon-avoidance mechanisms cleanly separated:
-    #   far range  → bend the goal direction gradually (this step)
-    #   close range → radial push takes over (Step 4)
+    # Pre-emptive polygon bypass at long range
     if restricted_airspace is not None:
         own_xy = (flight.position.x, flight.position.y)
         target_xy = (flight.target.x, flight.target.y)
@@ -200,7 +175,7 @@ def mvp_resolver(
     v_goal_x = goal_dx * flight.optimal_airspeed
     v_goal_y = goal_dy * flight.optimal_airspeed
 
-    # 2. INTRUDER REPULSION (CPA-based potential field)
+    # Intruder repulsion (CPA-based)
     v_repulse_x = 0.0
     v_repulse_y = 0.0
     in_active_conflict = False
@@ -244,11 +219,7 @@ def mvp_resolver(
         cpa_ry = ry + vy * t_cpa
         d_cpa = math.hypot(cpa_rx, cpa_ry)  # predicted separation at CPA
 
-        # CPA threat: conflict predicted within the lookahead window.
-        cpa_threat = (0 < t_cpa < lookahead) and (d_cpa < min_dist)
-        # Proximity threat: inside the soft warning zone regardless of trajectory.
-        # This also fires for diverging pairs to maintain a separation buffer and
-        # prevent re-convergence after a near-miss.
+        # Threat evaluation
         prox_threat = cur_dist < proximity_zone
         if not (cpa_threat or prox_threat):
             continue  # no threat from this intruder
@@ -257,9 +228,7 @@ def mvp_resolver(
         if cpa_threat:
             cpa_dist = d_cpa
             if cpa_dist < 1e-3:
-                # Degenerate: aircraft will be co-located at CPA.
-                # Use own heading as the escape axis; object ID breaks the symmetry
-                # so both aircraft turn in opposite directions.
+                # Degenerate case: co-located at CPA
                 sign = 1.0 if own_id < id(intruder) else -1.0
                 repulse_dir_x = -sign * math.cos(flight.track)
                 repulse_dir_y =  sign * math.sin(flight.track)
@@ -267,10 +236,7 @@ def mvp_resolver(
                 # Push away from the predicted CPA position.
                 repulse_dir_x = cpa_rx / cpa_dist
                 repulse_dir_y = cpa_ry / cpa_dist
-            # Repulsion magnitude: combine the original time-scaled formula (strong
-            # for imminent threats) with a baseline fraction of optimal_airspeed
-            # (ensures far-ahead threats are not overwhelmed by the goal force).
-            # severity ∈ (0, 1] — how close d_cpa is to zero.
+            # Repulsion magnitude
             dist_to_move = min_dist - d_cpa
             t_eff = max(t_cpa, 30.0)
             severity = dist_to_move / min_dist
@@ -280,18 +246,13 @@ def mvp_resolver(
             v_repulse_y += repulse_dir_y * max(time_scaled, speed_based) * burden_share
 
         if prox_threat and cur_dist > 1e-3:
-            # Real-time push that grows as separation shrinks below the warning zone.
-            # (proximity_zone / cur_dist) > 1.0 inside the zone; subtracting 1.0
-            # gives a positive push strength that increases as the gap closes.
+            # Real-time proximity push
             push_strength = (proximity_zone / max(cur_dist, min_dist * 0.5)) - 1.0
             push_strength = max(0.0, push_strength) * flight.optimal_airspeed * 0.5
             v_repulse_x += (rx / cur_dist) * push_strength * burden_share
             v_repulse_y += (ry / cur_dist) * push_strength * burden_share
 
-    # 3. SCALE GOAL FORCE BY INTRUDER PROXIMITY
-    # Far from all threats the aircraft flies normally (scale = 1.0).
-    # Inside the protected zone the goal is nearly suppressed (scale = 0.2)
-    # so avoidance dominates. Linear ramp between the two extremes.
+    # Scale goal force by intruder proximity
     threat_far = 3.0 * min_dist
     if closest_intruder_dist >= threat_far:
         goal_scale = 1.0
@@ -303,10 +264,7 @@ def mvp_resolver(
     v_goal_x *= goal_scale
     v_goal_y *= goal_scale
 
-    # 4. RESTRICTED AIRSPACE — close-range radial repulsion.
-    # Uses Shapely to find the exact nearest boundary point, fixing the v0 sign bug:
-    # the push now always points FROM the aircraft TOWARD the boundary (i.e., toward
-    # the exit), regardless of polygon concavity.
+    # Restricted airspace radial repulsion
     restricted_active = False
     if restricted_airspace is not None:
         own_pt = Point(flight.position.x, flight.position.y)
@@ -324,36 +282,27 @@ def mvp_resolver(
             tx_unit = ex / d_r  # unit vector pointing toward the boundary
             ty_unit = ey / d_r
             if in_restricted:
-                # Strong fixed ramp to force an immediate exit.
-                ramp = 1.5
-                # Add (not subtract) because the vector already points toward the exit.
+                # Strong fixed ramp to force immediate exit
                 v_repulse_x += tx_unit * flight.optimal_airspeed * ramp * restricted_weight
                 v_repulse_y += ty_unit * flight.optimal_airspeed * ramp * restricted_weight
             else:
-                # Outside but within buffer: linearly ramp from 0 at the buffer edge
-                # to 1.0 at the boundary, then subtract to push away from the polygon.
+                # Outside but within buffer
                 ramp = (restricted_buffer - d_r) / restricted_buffer
                 v_repulse_x -= tx_unit * flight.optimal_airspeed * ramp * restricted_weight
                 v_repulse_y -= ty_unit * flight.optimal_airspeed * ramp * restricted_weight
 
-    # 5. COMBINE — sum goal and all repulsive contributions into one desired velocity.
+    # Combine desired velocity
     v_final_x = v_goal_x + v_repulse_x
     v_final_y = v_goal_y + v_repulse_y
 
-    # 6. CONVERT TO ACTION SPACE [-1, 1]
-    # Derive the heading implied by v_final, compute the signed angular error, and
-    # normalise by the maximum turn achievable in one RL decision.
+    # Convert to action space [-1, 1]
     desired_track = math.atan2(v_final_x, v_final_y)
     track_error = (desired_track - flight.track + math.pi) % (2 * math.pi) - math.pi
     raw_heading = float(np.clip(
         track_error / (HEADING_SCALE_RAD * ACTION_FREQUENCY), -1.0, 1.0
     ))
 
-    # 7. ANTI-WIGGLE IIR FILTER — applied only when relaxed.
-    # When no threat is active and the requested heading change is small (< 0.25),
-    # apply a low-pass filter to suppress cosmetic dithering caused by floating-point
-    # noise in the goal vector. During real threats the raw signal passes through
-    # unmodified so reactive turns are never damped.
+    # Anti-wiggle IIR filter
     fid = id(flight)
     if (not intruder_threat_active and not restricted_active
             and abs(raw_heading) < 0.25):
